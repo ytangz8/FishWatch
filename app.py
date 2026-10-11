@@ -71,12 +71,10 @@ def index():
 def state():
     cfg = store.snapshot()
     cfg.pop("token", None)
-    tpl = BASE / cfg["template"]
     return {
         "status": engine.status,
         "config": cfg,
-        "template_exists": tpl.exists(),
-        "keep_template_exists": (BASE / cfg["keep_template"]).exists(),
+        "templates": _template_list(cfg),
         "key_names": {str(k): v for k, v in win_input.KEY_NAMES.items()},
         "events": list(engine.events)[-50:][::-1],
     }
@@ -130,19 +128,54 @@ def keep_preview():
     return Response(engine.keep_preview_jpeg, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
 
 
-@app.get("/api/template.png")
-def template_img(target: str = "fish"):
+def _template_list(cfg):
+    out = {}
+    for target in ("fish", "keep"):
+        out[target] = [
+            {"name": t.name, "width": t.size[0], "height": t.size[1],
+             "mask_ratio": round(t.mask_ratio, 2), "masked": t.mask is not None}
+            for t in engine.templates(cfg, target)
+        ]
+    return out
+
+
+def _target(target):
+    if target not in ("fish", "keep"):
+        raise HTTPException(400, "target 只能是 fish 或 keep")
+    return target
+
+
+@app.get("/api/templates/{target}/{name}")
+def template_img(target: str, name: str, view: str = "mask"):
+    """view=mask：背景透明的预览（显示遮罩效果）；view=raw：原图。"""
+    _target(target)
     cfg = store.snapshot()
-    p = BASE / (cfg["keep_template"] if target == "keep" else cfg["template"])
-    if not p.exists():
-        raise HTTPException(404, "没有模板")
-    return FileResponse(p, headers={"Cache-Control": "no-store"})
+    try:
+        if view == "raw":
+            return FileResponse(engine.lib.path(target, name), headers={"Cache-Control": "no-store"})
+        if target == "keep":
+            png = engine.lib.preview_png(target, name, cfg["keep_mask_mode"], cfg["keep_mask_sensitivity"])
+        else:
+            png = engine.lib.preview_png(target, name, cfg["mask_mode"], cfg["mask_sensitivity"])
+    except (FileNotFoundError, ValueError):
+        raise HTTPException(404, "没有这个模板")
+    return Response(png, media_type="image/png", headers={"Cache-Control": "no-store"})
+
+
+@app.delete("/api/templates/{target}/{name}")
+def delete_template(target: str, name: str):
+    _target(target)
+    try:
+        engine.lib.delete(target, name)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    engine._record("template_deleted", target=target, name=name)
+    return {"ok": True}
 
 
 @app.post("/api/template")
 async def save_template(request: Request, target: str = "fish"):
-    if target not in ("fish", "keep"):
-        raise HTTPException(400, "target 只能是 fish 或 keep")
+    _target(target)
     rect = await request.json()
     try:
         r = {k: int(rect[k]) for k in ("left", "top", "width", "height")}
@@ -197,13 +230,15 @@ def test_keep():
     """立即对入护区域判定一次，只返回结果，不按键。"""
     cfg = store.snapshot()
     try:
-        score, _, _ = engine.keep_score(cfg)
+        r, _ = engine.keep_score(cfg)
     except ValueError as e:
         raise HTTPException(400, str(e))
+    score = r.score
     present = score >= cfg["keep_threshold"]
     key = cfg["keep_key_present"] if present else cfg["keep_key_absent"]
     return {
         "score": round(score, 4),
+        "template": r.name,
         "decision": "keep" if present else "release",
         "key": win_input.KEY_NAMES.get(key, hex(key)),
     }

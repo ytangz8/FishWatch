@@ -7,3 +7,5 @@ fishwatch.log*
 snapshots/
 template.png
 keep_template.png
+templates/
+*.migrated

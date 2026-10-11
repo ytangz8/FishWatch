@@ -47,7 +47,16 @@
   .preview figcaption { font-size: 12px; color: var(--muted); }
   .preview img { display: block; max-width: 100%; image-rendering: pixelated; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); min-width: 40px; min-height: 40px; }
   #roiPrev { max-height: 260px; }
-  #tplImg { max-height: 120px; }
+  .tpls { display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-start; }
+  .tpl { position: relative; border: 2px solid var(--line); border-radius: 6px; padding: 4px; background: var(--panel); }
+  .tpl.active { border-color: var(--hit); }
+  .tpl img { display: block; image-rendering: pixelated; border: 0; border-radius: 3px; min-width: 0; min-height: 0;
+             background: repeating-conic-gradient(#c8c8c8 0 25%, #f0f0f0 0 50%) 0 0 / 12px 12px; }
+  .tpl .cap { font: 11px var(--mono); color: var(--muted); margin-top: 3px; }
+  .tpl .cap.warn { color: var(--warn); }
+  .tpl button { position: absolute; top: -8px; right: -8px; width: 20px; height: 20px; padding: 0; line-height: 18px;
+                border-radius: 50%; font-size: 12px; }
+  .tpls .none { font-size: 12px; color: var(--muted); padding: 8px 0; }
   .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
   .canvas-wrap { position: relative; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: var(--bg); min-height: 120px; }
   canvas { display: block; width: 100%; cursor: crosshair; touch-action: none; }
@@ -99,7 +108,7 @@
       <div class="msg" id="errMsg"></div>
       <div class="preview">
         <figure><img id="roiPrev" alt=""><figcaption>上鱼检测区域实时画面（框 = 最佳匹配位置）</figcaption></figure>
-        <figure><img id="tplImg" alt=""><figcaption>上鱼图标模板</figcaption></figure>
+        <figure><div class="tpls" id="fishTpls"></div><figcaption>上鱼图标模板（透明 = 被忽略的背景；绿框 = 当前最佳匹配）</figcaption></figure>
       </div>
 
       <h3>入护判定 <span class="phase" id="keepPhase"></span></h3>
@@ -113,7 +122,7 @@
       <div class="legend" style="margin-left:0" id="keepMsg"></div>
       <div class="preview" style="margin-top:8px">
         <figure><img id="keepPrev" alt=""><figcaption>入护区域实时画面</figcaption></figure>
-        <figure><img id="keepTplImg" alt=""><figcaption>入护图标模板</figcaption></figure>
+        <figure><div class="tpls" id="keepTpls"></div><figcaption>入护图标模板</figcaption></figure>
       </div>
     </section>
 
@@ -140,11 +149,11 @@
             w <input id="rw" type="number"> h <input id="rh" type="number">
           </div>
           <div class="row">
-            <button id="setTplBtn" class="primary">保存为模板</button>
+            <button id="setTplBtn" class="primary">添加为模板</button>
             <button id="setRoiBtn">设为检测区域</button>
             <button id="setPtBtn">选区中心设为固定点击点</button>
           </div>
-          <div class="legend" style="margin-left:0">模板：紧贴图标框选。检测区域：图标可能出现的整片范围（比模板大）。坐标为屏幕物理像素。</div>
+          <div class="legend" style="margin-left:0">模板：框住图标，<b>四周留 3–5 像素背景</b>（用来自动去背景）。背景变化很大时，可以在不同背景下各添加一张。检测区域：图标可能出现的整片范围。坐标为屏幕物理像素。</div>
         </div>
       </div>
     </section>
@@ -161,6 +170,8 @@
         <label class="f"><span>点击延迟 (ms)<small>命中后等多久再双击</small></span><input name="click_delay_ms" type="number" min="0"></label>
         <label class="f"><span>双击间隔 (ms)</span><input name="double_click_gap_ms" type="number" min="10" max="400"></label>
         <label class="f"><span>点击位置</span><select name="click_mode"><option value="match_center">图标中心</option><option value="fixed">固定点</option></select></label>
+        <label class="f"><span>自动去背景<small>只比较图标本身，背景变化不影响分数</small></span><select name="mask_mode"><option value="auto">开</option><option value="none">关</option></select></label>
+        <label class="f"><span>去背景灵敏度<small>默认 30；图标被裁掉太多就调小，背景残留就调大</small></span><input name="mask_sensitivity" type="number" min="5" max="150"></label>
         <label class="f"><span>灰度匹配<small>图标靠颜色区分时关闭</small></span><select name="grayscale"><option value="true">是</option><option value="false">否</option></select></label>
         <label class="f"><span>点击后还原鼠标</span><select name="restore_cursor"><option value="true">是</option><option value="false">否</option></select></label>
         <label class="f"><span>保存触发截图</span><select name="save_snapshots"><option value="true">是</option><option value="false">否</option></select></label>
@@ -174,6 +185,8 @@
         <label class="f"><span>有图标时按</span><select name="keep_key_present" class="keysel"></select></label>
         <label class="f"><span>无图标时按</span><select name="keep_key_absent" class="keysel"></select></label>
         <label class="f"><span>按键按住 (ms)</span><input name="key_hold_ms" type="number" min="10"></label>
+        <label class="f"><span>自动去背景</span><select name="keep_mask_mode"><option value="auto">开</option><option value="none">关</option></select></label>
+        <label class="f"><span>去背景灵敏度</span><input name="keep_mask_sensitivity" type="number" min="5" max="150"></label>
         <label class="f"><span>灰度匹配</span><select name="keep_grayscale"><option value="true">是</option><option value="false">否</option></select></label>
         <div class="row"><button class="primary" type="submit">保存参数</button><span class="legend" id="cfgMsg"></span></div>
       </form>
@@ -207,8 +220,8 @@ async function api(path, opts = {}) {
 }
 
 // ---------------------------------------------------------------- state polling
-let CFG = null, formLoaded = false, tplVersion = 0;
-const KIND = { double_click: "双击", pause: "暂停", resume: "开始", template_saved: "保存模板", keep: "入护", keep_skipped: "跳过入护" };
+let CFG = null, formLoaded = false;
+const KIND = { double_click: "双击", pause: "暂停", resume: "开始", template_saved: "添加模板", template_deleted: "删除模板", keep: "入护", keep_skipped: "跳过入护" };
 const PHASE = { keep_wait: "等待结算界面…", keep_check: "判定中…" };
 let keyOptsLoaded = false;
 
@@ -236,7 +249,9 @@ function render(st) {
   $("keepFill").className = "fill" + (ks != null && ks >= CFG.keep_threshold ? " hit" : "");
   $("keepThMark").style.left = CFG.keep_threshold * 100 + "%";
   $("keepPhase").textContent = PHASE[s.phase] || (CFG.keep_enabled ? "" : "（未启用）");
-  if (!st.keep_template_exists) $("keepMsg").textContent = "尚未设置：在下方选「入护图标」，截图后框选图标并保存为模板";
+  renderTpls("fish", st.templates.fish, s.template, CFG.mask_mode + CFG.mask_sensitivity);
+  renderTpls("keep", st.templates.keep, s.keep_template, CFG.keep_mask_mode + CFG.keep_mask_sensitivity);
+  if (!st.templates.keep.length) $("keepMsg").textContent = "尚未设置：在下方选「入护图标」，截图后框选图标并添加为模板";
   else if (!CFG.keep_roi) $("keepMsg").textContent = "尚未设置入护检测区域";
   else $("keepMsg").textContent = "";
   if (!keyOptsLoaded) {
@@ -253,14 +268,15 @@ function renderEvents(evs) {
   $("evBody").innerHTML = evs.map((e) => {
     let d = "";
     if (e.kind === "double_click") {
-      d = `(${e.x}, ${e.y})` + (e.score != null ? ` 分数 ${e.score}` : "") + (e.reason === "test" ? " 测试" : "") + (e.dry_run ? " dry-run" : "");
+      d = `(${e.x}, ${e.y})` + (e.score != null ? ` 分数 ${e.score}` : "") + (e.template ? ` [${e.template.slice(0, 3)}]` : "") + (e.reason === "test" ? " 测试" : "") + (e.dry_run ? " dry-run" : "");
       if (e.snapshot) d += ` <a href="/api/snapshot/${e.snapshot}?${tq()}" target="_blank">截图</a>`;
     } else if (e.kind === "keep") {
       d = `<b>${e.decision === "keep" ? "入护" : "释放"}</b> → ${e.key} 最高分 ${e.score}` + (e.dry_run ? " dry-run" : "");
       if (e.snapshot) d += ` <a href="/api/snapshot/${e.snapshot}?${tq()}" target="_blank">截图</a>`;
     } else if (e.kind === "keep_skipped") d = e.reason;
     else if (e.source) d = e.source === "hotkey" ? "F8 热键" : "网页";
-    else if (e.width) d = (e.target === "keep" ? "入护 " : "上鱼 ") + `${e.width}×${e.height}`;
+    else if (e.kind === "template_saved" || e.kind === "template_deleted")
+      d = (e.target === "keep" ? "入护 " : "上鱼 ") + (e.name || "") + (e.width ? ` ${e.width}×${e.height}` : "");
     return `<tr><td class="t">${e.ts.slice(5, 19).replace("T", " ")}</td><td>${KIND[e.kind] || e.kind}</td><td>${d}</td></tr>`;
   }).join("") || `<tr><td class="legend">暂无事件</td></tr>`;
 }
@@ -281,11 +297,30 @@ function refreshImg(id, url) {
   };
   loop();
 }
-function refreshTemplate() {
-  tplVersion++;
-  $("tplImg").src = `/api/template.png?${tq()}target=fish&v=${tplVersion}`;
-  $("keepTplImg").src = `/api/template.png?${tq()}target=keep&v=${tplVersion}`;
+const tplSig = {};
+function renderTpls(target, list, active, maskKey) {
+  const box = $(target === "fish" ? "fishTpls" : "keepTpls");
+  const sig = maskKey + "|" + list.map((t) => `${t.name}:${t.width}x${t.height}:${t.mask_ratio}`).join(",");
+  if (tplSig[target] !== sig) {
+    tplSig[target] = sig;
+    box.innerHTML = list.length ? list.map((t) => {
+      const scale = Math.max(1, Math.min(3, Math.floor(72 / Math.max(t.width, t.height))));
+      const cap = t.masked ? `${t.name.slice(0, 3)} · 保留${Math.round(t.mask_ratio * 100)}%` : `${t.name.slice(0, 3)} · 未去背景`;
+      const warn = target && !t.masked && CFG[target === "keep" ? "keep_mask_mode" : "mask_mode"] === "auto";
+      return `<div class="tpl" data-name="${t.name}" title="${warn ? "自动去背景失败：截图时图标四周要留一圈背景，或调整灵敏度" : ""}">
+        <img src="/api/templates/${target}/${t.name}?${tq()}k=${encodeURIComponent(sig)}" width="${t.width * scale}" height="${t.height * scale}" alt="">
+        <div class="cap${warn ? " warn" : ""}">${cap}</div>
+        <button data-del="${target}/${t.name}" title="删除">×</button></div>`;
+    }).join("") : `<div class="none">还没有模板</div>`;
+  }
+  box.querySelectorAll(".tpl").forEach((el) => el.classList.toggle("active", el.dataset.name === active));
 }
+document.addEventListener("click", async (ev) => {
+  const del = ev.target.closest("button[data-del]");
+  if (!del) return;
+  if (!confirm(`删除模板 ${del.dataset.del}？`)) return;
+  try { await api(`/api/templates/${del.dataset.del}`, { method: "DELETE" }); } catch (e) { alert(e.message); }
+});
 
 // ---------------------------------------------------------------- form
 const BOOL_FIELDS = ["grayscale", "restore_cursor", "save_snapshots", "keep_enabled", "keep_grayscale"];
@@ -415,7 +450,11 @@ document.querySelectorAll('input[name="target"]').forEach((el) => el.addEventLis
 }));
 $("setTplBtn").onclick = async () => {
   const r = selRect(); if (!r) return;
-  try { await api(`/api/template?target=${target()}`, { method: "POST", body: JSON.stringify(r) }); refreshTemplate(); }
+  try {
+    const res = await api(`/api/template?target=${target()}`, { method: "POST", body: JSON.stringify(r) });
+    if (res.mask_ratio == null && (target() === "keep" ? CFG.keep_mask_mode : CFG.mask_mode) === "auto")
+      alert("模板已添加，但自动去背景失败（可能框得太紧，四周没有背景）。建议删掉重新框选，四周多留几个像素。");
+  }
   catch (e) { alert(e.message); }
 };
 $("setRoiBtn").onclick = async () => {
@@ -433,7 +472,7 @@ $("setPtBtn").onclick = async () => {
   } catch (e) { alert(e.message); }
 };
 
-loadMonitors(); poll(); refreshTemplate();
+loadMonitors(); poll();
 refreshImg("roiPrev", "/api/preview.jpg");
 refreshImg("keepPrev", "/api/keep_preview.jpg");
 </script>

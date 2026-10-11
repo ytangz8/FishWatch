@@ -10,7 +10,9 @@ DEFAULTS = {
     "token": "",             # 非空时访问网页需带 ?token=xxx
     "monitor": 1,            # mss 显示器编号，1 = 主屏
     "roi": None,             # 检测区域 {left, top, width, height}，屏幕绝对物理像素
-    "template": "template.png",
+    "template": "template.png",     # 旧版单模板文件，启动时自动迁移到 templates/fish/
+    "mask_mode": "auto",            # auto = 自动去背景，只比较图标像素；none = 整块比较
+    "mask_sensitivity": 30,         # 去背景灵敏度：越小保留的像素越多，越大越只保留和背景差异明显的部分
     "threshold": 0.85,       # 匹配分数阈值 (0~1)
     "grayscale": True,       # 灰度匹配更快；图标靠颜色区分时改 False
     "debounce": 2,           # 连续命中 N 帧才触发
@@ -31,6 +33,8 @@ DEFAULTS = {
     "keep_template": "keep_template.png",
     "keep_threshold": 0.85,
     "keep_grayscale": True,
+    "keep_mask_mode": "auto",
+    "keep_mask_sensitivity": 30,
     "keep_delay_ms": 1500,             # 双击后等多久再开始判定（等结算界面出来）
     "keep_window_ms": 1500,            # 判定窗口：窗口内任一帧命中 → 入护；整段都没命中 → 释放
     "keep_key_present": 0x20,          # 有图标时按的键（空格）
@@ -55,6 +59,10 @@ EDITABLE = {
     "hotkey_vk": int,
     "enabled": bool,
     "save_snapshots": bool,
+    "mask_mode": str,
+    "mask_sensitivity": int,
+    "keep_mask_mode": str,
+    "keep_mask_sensitivity": int,
     "keep_enabled": bool,
     "keep_roi": dict,
     "keep_threshold": float,
@@ -80,6 +88,8 @@ RANGES = {
     "keep_key_present": (1, 254),
     "keep_key_absent": (1, 254),
     "key_hold_ms": (10, 1000),
+    "mask_sensitivity": (5, 150),
+    "keep_mask_sensitivity": (5, 150),
 }
 
 
@@ -144,6 +154,8 @@ class ConfigStore:
                 lo, hi = RANGES[k]
                 if not lo <= v <= hi:
                     raise ConfigError(f"{k} 超出范围 [{lo}, {hi}]")
+            if k in ("mask_mode", "keep_mask_mode") and v not in ("auto", "none"):
+                raise ConfigError(f"{k} 只能是 auto 或 none")
             if k == "click_mode" and v not in ("match_center", "fixed"):
                 raise ConfigError("click_mode 只能是 match_center 或 fixed")
             clean[k] = v

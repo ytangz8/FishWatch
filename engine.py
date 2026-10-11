@@ -12,6 +12,7 @@ import cv2
 import numpy as np
 
 import win_input
+from detector import TemplateLibrary, match_set
 
 log = logging.getLogger("fishwatch")
 
@@ -66,22 +67,6 @@ def make_grabber():
     return ImageGrabber(fake) if fake else MssGrabber()
 
 
-# ---------------------------------------------------------------- detect
-def match(img_bgr: np.ndarray, tpl_bgr: np.ndarray, tpl_gray: np.ndarray, grayscale: bool):
-    """返回 (score, (x, y))，(x, y) 为模板左上角在 img 中的位置。"""
-    if grayscale:
-        src = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
-        tpl = tpl_gray
-    else:
-        src = np.ascontiguousarray(img_bgr)
-        tpl = tpl_bgr
-    res = cv2.matchTemplate(src, tpl, cv2.TM_CCOEFF_NORMED)
-    _, max_v, _, max_loc = cv2.minMaxLoc(res)
-    if not np.isfinite(max_v):  # 纯色区域会产生 NaN
-        max_v = 0.0
-    return float(max_v), max_loc
-
-
 # ---------------------------------------------------------------- engine
 class Engine:
     def __init__(self, store, base_dir: Path, grabber=None):
@@ -94,7 +79,10 @@ class Engine:
 
         self._lock = threading.Lock()
         self._stop = threading.Event()
-        self._tpls = {}           # path -> (mtime, bgr, gray)
+        self.lib = TemplateLibrary(base_dir / "templates")
+        cfg = store.snapshot()
+        self.lib.import_legacy(base_dir / cfg.get("template", "template.png"), "fish")
+        self.lib.import_legacy(base_dir / cfg.get("keep_template", "keep_template.png"), "keep")
 
         self.status = {
             "running": False,
@@ -115,30 +103,27 @@ class Engine:
         self.events = collections.deque(self._load_events(), maxlen=300)
 
     # ---- template -------------------------------------------------
-    def _load_template(self, name):
-        """按文件名加载模板并缓存；文件被重新保存后自动重载。返回 (bgr, gray) 或 None。"""
-        path = self.base / name
-        try:
-            mtime = path.stat().st_mtime
-        except FileNotFoundError:
-            self._tpls.pop(name, None)
-            return None
-        cached = self._tpls.get(name)
-        if cached and cached[0] == mtime:
-            return cached[1], cached[2]
-        bgr = cv2.imread(str(path), cv2.IMREAD_COLOR)
-        if bgr is None:
-            return None
-        gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
-        self._tpls[name] = (mtime, bgr, gray)
-        log.info("模板已加载 %s %dx%d", name, bgr.shape[1], bgr.shape[0])
-        return bgr, gray
+    def templates(self, cfg, target):
+        if target == "keep":
+            return self.lib.load("keep", cfg["keep_mask_mode"], cfg["keep_mask_sensitivity"])
+        return self.lib.load("fish", cfg["mask_mode"], cfg["mask_sensitivity"])
 
-    def _template(self, cfg):
-        return self._load_template(cfg["template"])
+    def check_ready(self, cfg, target):
+        """返回 (roi, templates)，缺东西时抛 ValueError。"""
+        label = "入护判定：" if target == "keep" else ""
+        roi = cfg.get("keep_roi" if target == "keep" else "roi")
+        if not roi:
+            raise ValueError(label + "尚未设置检测区域")
+        tpls = self.templates(cfg, target)
+        if not tpls:
+            raise ValueError(label + "尚未保存模板")
+        too_big = [t.name for t in tpls if t.size[0] > roi["width"] or t.size[1] > roi["height"]]
+        if len(too_big) == len(tpls):
+            raise ValueError(label + "模板比检测区域还大，请把检测区域框大一些")
+        return roi, tpls
 
     def save_template(self, rect, target="fish") -> dict:
-        """从最近一次全屏截图中裁出模板（图标可能已消失，所以不重新截图）。"""
+        """从最近一次全屏截图中裁出模板（图标可能已消失，所以不重新截图），追加到模板库。"""
         if self.last_full is None:
             raise ValueError("请先在网页上刷新截图")
         mon, img = self.last_full
@@ -147,11 +132,11 @@ class Engine:
         w, h = rect["width"], rect["height"]
         if x < 0 or y < 0 or x + w > img.shape[1] or y + h > img.shape[0]:
             raise ValueError("选区超出截图范围")
-        crop = img[y:y + h, x:x + w]
+        name = self.lib.add(target, img[y:y + h, x:x + w].copy())
         cfg = self.store.snapshot()
-        name = cfg["keep_template"] if target == "keep" else cfg["template"]
-        cv2.imwrite(str(self.base / name), crop)
-        return {"width": w, "height": h}
+        tpl = next((t for t in self.templates(cfg, target) if t.name == name), None)
+        ratio = round(tpl.mask_ratio, 2) if tpl else None
+        return {"name": name, "width": w, "height": h, "mask_ratio": ratio}
 
     # ---- screenshot for UI ---------------------------------------
     def full_screenshot(self, monitor_idx: int):
@@ -216,25 +201,13 @@ class Engine:
 
     # ---- 入护判定 -------------------------------------------------
     def keep_ready(self, cfg):
-        """返回 (roi, (tpl_bgr, tpl_gray)) 或抛出 ValueError 说明缺什么。"""
-        roi = cfg.get("keep_roi")
-        if not roi:
-            raise ValueError("入护判定：尚未设置检测区域")
-        tpl = self._load_template(cfg["keep_template"])
-        if tpl is None:
-            raise ValueError("入护判定：尚未保存入护图标模板")
-        th, tw = tpl[1].shape
-        if tw > roi["width"] or th > roi["height"]:
-            raise ValueError("入护判定：模板比检测区域还大")
-        return roi, tpl
+        return self.check_ready(cfg, "keep")
 
-    def keep_score(self, cfg, grabber=None):
-        """对入护区域截一帧并匹配，返回 (score, img, (x, y, w, h))。"""
-        roi, (tpl_bgr, tpl_gray) = self.keep_ready(cfg)
-        img = (grabber or self.grabber).grab(roi)
-        score, (mx, my) = match(img, tpl_bgr, tpl_gray, cfg["keep_grayscale"])
-        th, tw = tpl_gray.shape
-        return score, img, (mx, my, tw, th)
+    def keep_score(self, cfg):
+        """对入护区域截一帧并匹配，返回 (MatchResult, img)。"""
+        roi, tpls = self.keep_ready(cfg)
+        img = self.grabber.grab(roi)
+        return match_set(img, tpls, cfg["keep_grayscale"]), img
 
     def _sleep(self, seconds):
         """可被停止信号打断的 sleep。"""
@@ -255,15 +228,15 @@ class Engine:
         self.status["phase"] = "keep_check"
 
         deadline = time.perf_counter() + cfg["keep_window_ms"] / 1000
-        best, best_img, best_box = -1.0, None, None
+        best, best_img = None, None
         present = False
         checks = 0
         while not self._stop.is_set():
-            score, img, box = self.keep_score(cfg)
+            r, img = self.keep_score(cfg)
             checks += 1
-            if score > best:
-                best, best_img, best_box = score, img, box
-            if score >= cfg["keep_threshold"]:
+            if best is None or r.score > best.score:
+                best, best_img = r, img
+            if r.score >= cfg["keep_threshold"]:
                 present = True
                 break
             if time.perf_counter() >= deadline:
@@ -275,11 +248,12 @@ class Engine:
         real = win_input.press_key(key, cfg["key_hold_ms"]) if press else False
         snap = None
         if cfg["save_snapshots"] and best_img is not None:
-            snap = self._save_snapshot(best_img, best_box, prefix="keep_")
+            snap = self._save_snapshot(best_img, (best.x, best.y, best.w, best.h), prefix="keep_")
         return self._record(
             "keep",
             decision="keep" if present else "release",
-            score=round(best, 3),
+            score=round(best.score, 3) if best else None,
+            template=best.name if best else None,
             checks=checks,
             key=win_input.KEY_NAMES.get(key, hex(key)),
             dry_run=not real,
@@ -293,15 +267,16 @@ class Engine:
     def _update_keep_preview(self, cfg):
         """空闲时也刷新入护区域的分数和预览，方便在网页上调阈值。"""
         try:
-            score, img, (x, y, w, h) = self.keep_score(cfg)
+            r, img = self.keep_score(cfg)
         except ValueError:
             self.status["keep_score"] = None
             self.keep_preview_jpeg = None
             return
-        self.status["keep_score"] = round(score, 4)
+        self.status["keep_score"] = round(r.score, 4)
+        self.status["keep_template"] = r.name
         vis = np.ascontiguousarray(img).copy()
-        color = (0, 200, 0) if score >= cfg["keep_threshold"] else (160, 160, 160)
-        cv2.rectangle(vis, (x, y), (x + w, y + h), color, 2)
+        color = (0, 200, 0) if r.score >= cfg["keep_threshold"] else (160, 160, 160)
+        cv2.rectangle(vis, (r.x, r.y), (r.x + r.w, r.y + r.h), color, 2)
         ok, buf = cv2.imencode(".jpg", vis, [cv2.IMWRITE_JPEG_QUALITY, 75])
         if ok:
             self.keep_preview_jpeg = buf.tobytes()
@@ -343,25 +318,16 @@ class Engine:
                 cfg = self.store.snapshot()
             hotkey_prev = hk
 
-            roi = cfg.get("roi")
-            tpl = self._template(cfg)
-            if not roi:
-                self.status["error"] = "尚未设置检测区域"
-                time.sleep(0.3)
-                continue
-            if tpl is None:
-                self.status["error"] = "尚未保存模板"
-                time.sleep(0.3)
-                continue
-            tpl_bgr, tpl_gray = tpl
-            th, tw = tpl_gray.shape
-            if tw > roi["width"] or th > roi["height"]:
-                self.status["error"] = "模板比检测区域还大，请把检测区域框大一些"
+            try:
+                roi, tpls = self.check_ready(cfg, "fish")
+            except ValueError as e:
+                self.status["error"] = str(e)
                 time.sleep(0.3)
                 continue
 
             img = self.grabber.grab(roi)
-            score, (mx, my) = match(img, tpl_bgr, tpl_gray, cfg["grayscale"])
+            r = match_set(img, tpls, cfg["grayscale"])
+            score, mx, my, tw, th = r.score, r.x, r.y, r.w, r.h
             hit = score >= cfg["threshold"]
             consec = consec + 1 if hit else 0
             center = (roi["left"] + mx + tw // 2, roi["top"] + my + th // 2)
@@ -374,7 +340,7 @@ class Engine:
                 tx, ty = self.click_target(cfg, center)
                 snap = self._save_snapshot(img, (mx, my, tw, th)) if cfg["save_snapshots"] else None
                 info = self.fire(tx, ty, cfg, reason="hit", score=round(score, 3))
-                self._record("double_click", snapshot=snap, **info)
+                self._record("double_click", snapshot=snap, template=r.name, **info)
                 self.status["hits"] += 1
                 self.status["last_hit"] = self.events[-1]["ts"]
                 if cfg["keep_enabled"]:
@@ -383,7 +349,7 @@ class Engine:
                 consec = 0
 
             # 状态 & 预览
-            self.status.update(score=round(score, 4), hit=hit, error=None)
+            self.status.update(score=round(score, 4), hit=hit, error=None, template=r.name)
             frames += 1
             if now - fps_t0 >= 1.0:
                 self.status["fps"] = round(frames / (now - fps_t0), 1)
