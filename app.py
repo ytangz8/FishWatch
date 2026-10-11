@@ -76,6 +76,8 @@ def state():
         "status": engine.status,
         "config": cfg,
         "template_exists": tpl.exists(),
+        "keep_template_exists": (BASE / cfg["keep_template"]).exists(),
+        "key_names": {str(k): v for k, v in win_input.KEY_NAMES.items()},
         "events": list(engine.events)[-50:][::-1],
     }
 
@@ -121,34 +123,45 @@ def preview():
     return Response(engine.preview_jpeg, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
 
 
+@app.get("/api/keep_preview.jpg")
+def keep_preview():
+    if engine.keep_preview_jpeg is None:
+        raise HTTPException(404, "暂无预览")
+    return Response(engine.keep_preview_jpeg, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+
 @app.get("/api/template.png")
-def template_img():
-    p = BASE / store.snapshot()["template"]
+def template_img(target: str = "fish"):
+    cfg = store.snapshot()
+    p = BASE / (cfg["keep_template"] if target == "keep" else cfg["template"])
     if not p.exists():
         raise HTTPException(404, "没有模板")
     return FileResponse(p, headers={"Cache-Control": "no-store"})
 
 
 @app.post("/api/template")
-async def save_template(request: Request):
+async def save_template(request: Request, target: str = "fish"):
+    if target not in ("fish", "keep"):
+        raise HTTPException(400, "target 只能是 fish 或 keep")
     rect = await request.json()
     try:
         r = {k: int(rect[k]) for k in ("left", "top", "width", "height")}
         if r["width"] < 4 or r["height"] < 4:
             raise ValueError("模板太小")
-        info = engine.save_template(r)
+        info = engine.save_template(r, target)
     except (ValueError, KeyError) as e:
         raise HTTPException(400, str(e))
-    # 若还没有检测区域，自动以模板为中心向外扩 60px
-    if not store.snapshot().get("roi"):
+    # 若还没有对应的检测区域，自动以模板为中心向外扩 60px
+    roi_key = "keep_roi" if target == "keep" else "roi"
+    if not store.snapshot().get(roi_key):
         mon = engine.last_full[0]
         pad = 60
         left = max(mon["left"], r["left"] - pad)
         top = max(mon["top"], r["top"] - pad)
         right = min(mon["left"] + mon["width"], r["left"] + r["width"] + pad)
         bottom = min(mon["top"] + mon["height"], r["top"] + r["height"] + pad)
-        store.update({"roi": {"left": left, "top": top, "width": right - left, "height": bottom - top}})
-    engine._record("template_saved", **info)
+        store.update({roi_key: {"left": left, "top": top, "width": right - left, "height": bottom - top}})
+    engine._record("template_saved", target=target, **info)
     return {"ok": True, **info}
 
 
@@ -177,6 +190,23 @@ def test_click(delay: float = 3.0):
 
     threading.Thread(target=run, daemon=True).start()
     return {"ok": True, "x": target[0], "y": target[1], "delay": delay}
+
+
+@app.post("/api/test_keep")
+def test_keep():
+    """立即对入护区域判定一次，只返回结果，不按键。"""
+    cfg = store.snapshot()
+    try:
+        score, _, _ = engine.keep_score(cfg)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    present = score >= cfg["keep_threshold"]
+    key = cfg["keep_key_present"] if present else cfg["keep_key_absent"]
+    return {
+        "score": round(score, 4),
+        "decision": "keep" if present else "release",
+        "key": win_input.KEY_NAMES.get(key, hex(key)),
+    }
 
 
 # ---------------------------------------------------------------- main

@@ -24,6 +24,18 @@ DEFAULTS = {
     "hotkey_vk": 119,        # 暂停/恢复热键，119 = F8
     "enabled": False,        # 启动时默认暂停，确认配置后再开
     "save_snapshots": True,  # 每次触发保存一张 ROI 截图，便于排查误触发
+
+    # ---- 入护判定：双击上鱼后，看某区域有没有入护图标 ----
+    "keep_enabled": False,
+    "keep_roi": None,                  # 入护图标所在区域
+    "keep_template": "keep_template.png",
+    "keep_threshold": 0.85,
+    "keep_grayscale": True,
+    "keep_delay_ms": 1500,             # 双击后等多久再开始判定（等结算界面出来）
+    "keep_window_ms": 1500,            # 判定窗口：窗口内任一帧命中 → 入护；整段都没命中 → 释放
+    "keep_key_present": 0x20,          # 有图标时按的键（空格）
+    "keep_key_absent": 0x08,           # 没有图标时按的键（Backspace）
+    "key_hold_ms": 40,                 # 按键按住时长
 }
 
 # 允许通过网页修改的字段及其类型
@@ -43,6 +55,15 @@ EDITABLE = {
     "hotkey_vk": int,
     "enabled": bool,
     "save_snapshots": bool,
+    "keep_enabled": bool,
+    "keep_roi": dict,
+    "keep_threshold": float,
+    "keep_grayscale": bool,
+    "keep_delay_ms": int,
+    "keep_window_ms": int,
+    "keep_key_present": int,
+    "keep_key_absent": int,
+    "key_hold_ms": int,
 }
 
 RANGES = {
@@ -53,6 +74,12 @@ RANGES = {
     "click_delay_ms": (0, 10_000),
     "double_click_gap_ms": (10, 400),
     "monitor": (0, 16),
+    "keep_threshold": (0.3, 1.0),
+    "keep_delay_ms": (0, 30_000),
+    "keep_window_ms": (50, 30_000),
+    "keep_key_present": (1, 254),
+    "keep_key_absent": (1, 254),
+    "key_hold_ms": (10, 1000),
 }
 
 
@@ -97,11 +124,11 @@ class ConfigStore:
         for k, v in patch.items():
             if k not in EDITABLE:
                 raise ConfigError(f"不可修改的字段: {k}")
-            if v is None and k in ("roi", "click_point"):
+            if v is None and k in ("roi", "click_point", "keep_roi"):
                 clean[k] = None
                 continue
             typ = EDITABLE[k]
-            if k == "roi":
+            if k in ("roi", "keep_roi"):
                 v = _check_rect(v)
             elif k == "click_point":
                 v = _check_point(v)

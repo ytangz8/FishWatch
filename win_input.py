@@ -80,6 +80,32 @@ if IS_WIN:
     def key_down(vk: int) -> bool:
         return bool(user32.GetAsyncKeyState(int(vk)) & 0x8000)
 
+    INPUT_KEYBOARD = 1
+    KEYEVENTF_EXTENDEDKEY = 0x0001
+    KEYEVENTF_KEYUP = 0x0002
+    KEYEVENTF_SCANCODE = 0x0008
+    # 需要 E0 前缀的扩展键（方向键、Insert/Delete/Home/End/PgUp/PgDn）
+    _EXTENDED_VK = {0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x2D, 0x2E}
+
+    def _send_key(vk: int, scan: int, flags: int):
+        inp = INPUT(type=INPUT_KEYBOARD)
+        inp.u.ki = KEYBDINPUT(vk, scan, flags, 0, 0)
+        if user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(INPUT)) != 1:
+            raise OSError(f"SendInput failed, err={ctypes.get_last_error()}")
+
+    def _press_key_win(vk: int, hold_ms: int):
+        # 优先用扫描码：DirectInput / RawInput 的游戏通常只认扫描码
+        scan = user32.MapVirtualKeyW(int(vk), 0)  # MAPVK_VK_TO_VSC
+        if scan:
+            flags = KEYEVENTF_SCANCODE | (KEYEVENTF_EXTENDEDKEY if vk in _EXTENDED_VK else 0)
+            _send_key(0, scan, flags)
+            time.sleep(hold_ms / 1000)
+            _send_key(0, scan, flags | KEYEVENTF_KEYUP)
+        else:
+            _send_key(int(vk), 0, 0)
+            time.sleep(hold_ms / 1000)
+            _send_key(int(vk), 0, KEYEVENTF_KEYUP)
+
 else:
 
     def get_cursor_pos():
@@ -108,4 +134,29 @@ def double_click(x: int, y: int, gap_ms: int = 60, restore_cursor: bool = True) 
     if old is not None:
         time.sleep(0.03)
         set_cursor_pos(*old)
+    return True
+
+
+# 常用按键的虚拟键码，网页下拉框也用这张表
+KEY_NAMES = {
+    0x20: "空格 Space",
+    0x08: "退格 Backspace",
+    0x0D: "回车 Enter",
+    0x1B: "Esc",
+    0x09: "Tab",
+    0x45: "E",
+    0x46: "F",
+    0x51: "Q",
+    0x52: "R",
+    0x31: "1",
+    0x32: "2",
+    0x33: "3",
+}
+
+
+def press_key(vk: int, hold_ms: int = 40) -> bool:
+    """按下并松开一个键。返回 True 表示真实执行，False 表示 dry-run。"""
+    if not IS_WIN:
+        return False
+    _press_key_win(vk, hold_ms)
     return True

@@ -94,8 +94,7 @@ class Engine:
 
         self._lock = threading.Lock()
         self._stop = threading.Event()
-        self._tpl = None          # (bgr, gray)
-        self._tpl_key = None      # (path, mtime)
+        self._tpls = {}           # path -> (mtime, bgr, gray)
 
         self.status = {
             "running": False,
@@ -106,30 +105,39 @@ class Engine:
             "last_hit": None,
             "error": None,
             "dry_run": not win_input.IS_WIN,
+            "phase": "idle",       # idle / keep_wait / keep_check
+            "keep_score": None,
         }
         self.preview_jpeg = None
+        self.keep_preview_jpeg = None
         self.last_full = None      # (monitor_rect, bgr image) 给网页框选用
         self.last_match = None     # 最近一次匹配到的屏幕坐标中心
         self.events = collections.deque(self._load_events(), maxlen=300)
 
     # ---- template -------------------------------------------------
-    def _template(self, cfg):
-        path = self.base / cfg["template"]
+    def _load_template(self, name):
+        """按文件名加载模板并缓存；文件被重新保存后自动重载。返回 (bgr, gray) 或 None。"""
+        path = self.base / name
         try:
-            key = (str(path), path.stat().st_mtime)
+            mtime = path.stat().st_mtime
         except FileNotFoundError:
-            self._tpl, self._tpl_key = None, None
+            self._tpls.pop(name, None)
             return None
-        if key != self._tpl_key:
-            bgr = cv2.imread(str(path), cv2.IMREAD_COLOR)
-            if bgr is None:
-                return None
-            self._tpl = (bgr, cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY))
-            self._tpl_key = key
-            log.info("模板已加载 %s %dx%d", path.name, bgr.shape[1], bgr.shape[0])
-        return self._tpl
+        cached = self._tpls.get(name)
+        if cached and cached[0] == mtime:
+            return cached[1], cached[2]
+        bgr = cv2.imread(str(path), cv2.IMREAD_COLOR)
+        if bgr is None:
+            return None
+        gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+        self._tpls[name] = (mtime, bgr, gray)
+        log.info("模板已加载 %s %dx%d", name, bgr.shape[1], bgr.shape[0])
+        return bgr, gray
 
-    def save_template(self, rect) -> dict:
+    def _template(self, cfg):
+        return self._load_template(cfg["template"])
+
+    def save_template(self, rect, target="fish") -> dict:
         """从最近一次全屏截图中裁出模板（图标可能已消失，所以不重新截图）。"""
         if self.last_full is None:
             raise ValueError("请先在网页上刷新截图")
@@ -141,7 +149,8 @@ class Engine:
             raise ValueError("选区超出截图范围")
         crop = img[y:y + h, x:x + w]
         cfg = self.store.snapshot()
-        cv2.imwrite(str(self.base / cfg["template"]), crop)
+        name = cfg["keep_template"] if target == "keep" else cfg["template"]
+        cv2.imwrite(str(self.base / name), crop)
         return {"width": w, "height": h}
 
     # ---- screenshot for UI ---------------------------------------
@@ -175,14 +184,14 @@ class Engine:
         log.info("%s %s", kind, kw)
         return ev
 
-    def _save_snapshot(self, img, box):
+    def _save_snapshot(self, img, box, prefix=""):
         vis = img.copy()
         x, y, w, h = box
         cv2.rectangle(vis, (x, y), (x + w, y + h), (0, 0, 255), 2)
-        name = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3] + ".jpg"
+        name = prefix + datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3] + ".jpg"
         cv2.imwrite(str(self.snap_dir / name), vis)
-        snaps = sorted(self.snap_dir.glob("*.jpg"))
-        for old in snaps[:-100]:  # 只保留最近 100 张
+        snaps = sorted(self.snap_dir.glob("*.jpg"), key=lambda p: p.stat().st_mtime)
+        for old in snaps[:-200]:  # 只保留最近 200 张
             old.unlink(missing_ok=True)
         return name
 
@@ -205,9 +214,97 @@ class Engine:
             return r["left"] + r["width"] // 2, r["top"] + r["height"] // 2
         return None
 
+    # ---- 入护判定 -------------------------------------------------
+    def keep_ready(self, cfg):
+        """返回 (roi, (tpl_bgr, tpl_gray)) 或抛出 ValueError 说明缺什么。"""
+        roi = cfg.get("keep_roi")
+        if not roi:
+            raise ValueError("入护判定：尚未设置检测区域")
+        tpl = self._load_template(cfg["keep_template"])
+        if tpl is None:
+            raise ValueError("入护判定：尚未保存入护图标模板")
+        th, tw = tpl[1].shape
+        if tw > roi["width"] or th > roi["height"]:
+            raise ValueError("入护判定：模板比检测区域还大")
+        return roi, tpl
+
+    def keep_score(self, cfg, grabber=None):
+        """对入护区域截一帧并匹配，返回 (score, img, (x, y, w, h))。"""
+        roi, (tpl_bgr, tpl_gray) = self.keep_ready(cfg)
+        img = (grabber or self.grabber).grab(roi)
+        score, (mx, my) = match(img, tpl_bgr, tpl_gray, cfg["keep_grayscale"])
+        th, tw = tpl_gray.shape
+        return score, img, (mx, my, tw, th)
+
+    def _sleep(self, seconds):
+        """可被停止信号打断的 sleep。"""
+        self._stop.wait(max(0.0, seconds))
+
+    def run_keep_stage(self, cfg, press=True):
+        """双击上鱼后调用：等 keep_delay_ms，然后在 keep_window_ms 内反复检测入护图标。
+        任一帧分数 ≥ 阈值 → 按 keep_key_present（入护）；窗口结束仍未命中 → 按 keep_key_absent（释放）。
+        """
+        try:
+            self.keep_ready(cfg)
+        except ValueError as e:
+            self.status["error"] = str(e)
+            return self._record("keep_skipped", reason=str(e))
+
+        self.status["phase"] = "keep_wait"
+        self._sleep(cfg["keep_delay_ms"] / 1000)
+        self.status["phase"] = "keep_check"
+
+        deadline = time.perf_counter() + cfg["keep_window_ms"] / 1000
+        best, best_img, best_box = -1.0, None, None
+        present = False
+        checks = 0
+        while not self._stop.is_set():
+            score, img, box = self.keep_score(cfg)
+            checks += 1
+            if score > best:
+                best, best_img, best_box = score, img, box
+            if score >= cfg["keep_threshold"]:
+                present = True
+                break
+            if time.perf_counter() >= deadline:
+                break
+            self._sleep(min(cfg["interval_ms"], 100) / 1000)
+        self.status["phase"] = "idle"
+
+        key = cfg["keep_key_present"] if present else cfg["keep_key_absent"]
+        real = win_input.press_key(key, cfg["key_hold_ms"]) if press else False
+        snap = None
+        if cfg["save_snapshots"] and best_img is not None:
+            snap = self._save_snapshot(best_img, best_box, prefix="keep_")
+        return self._record(
+            "keep",
+            decision="keep" if present else "release",
+            score=round(best, 3),
+            checks=checks,
+            key=win_input.KEY_NAMES.get(key, hex(key)),
+            dry_run=not real,
+            snapshot=snap,
+        )
+
     def set_enabled(self, on: bool, source="web"):
         self.store.update({"enabled": on})
         self._record("resume" if on else "pause", source=source)
+
+    def _update_keep_preview(self, cfg):
+        """空闲时也刷新入护区域的分数和预览，方便在网页上调阈值。"""
+        try:
+            score, img, (x, y, w, h) = self.keep_score(cfg)
+        except ValueError:
+            self.status["keep_score"] = None
+            self.keep_preview_jpeg = None
+            return
+        self.status["keep_score"] = round(score, 4)
+        vis = np.ascontiguousarray(img).copy()
+        color = (0, 200, 0) if score >= cfg["keep_threshold"] else (160, 160, 160)
+        cv2.rectangle(vis, (x, y), (x + w, y + h), color, 2)
+        ok, buf = cv2.imencode(".jpg", vis, [cv2.IMWRITE_JPEG_QUALITY, 75])
+        if ok:
+            self.keep_preview_jpeg = buf.tobytes()
 
     # ---- main loop -----------------------------------------------
     def start(self):
@@ -280,7 +377,9 @@ class Engine:
                 self._record("double_click", snapshot=snap, **info)
                 self.status["hits"] += 1
                 self.status["last_hit"] = self.events[-1]["ts"]
-                last_fire = time.perf_counter()
+                if cfg["keep_enabled"]:
+                    self.run_keep_stage(cfg)
+                last_fire = time.perf_counter()  # 冷却从整轮（双击 + 入护）结束后开始算
                 consec = 0
 
             # 状态 & 预览
@@ -296,6 +395,7 @@ class Engine:
                 ok, buf = cv2.imencode(".jpg", vis, [cv2.IMWRITE_JPEG_QUALITY, 75])
                 if ok:
                     self.preview_jpeg = buf.tobytes()
+                self._update_keep_preview(cfg)
                 last_preview = now
 
             spent = time.perf_counter() - t0
