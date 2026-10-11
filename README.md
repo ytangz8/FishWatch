@@ -61,3 +61,17 @@ netsh advfirewall firewall add rule name="FishWatch" dir=in action=allow protoco
 ```bash
 FISHWATCH_FAKE_SCREEN=screen.png python app.py   # 用一张图片当作屏幕，点击为 dry-run
 ```
+
+## 更新代码
+
+首次在 Windows 上部署：
+
+```bat
+git clone <仓库地址> fishwatch
+cd fishwatch
+start.bat
+```
+
+之后每次仓库有更新，双击 `update.bat`。它会依次停掉正在运行的实例、执行 `git pull`、安装新增的依赖，然后重新启动。
+
+`config.json`、`template.png`、`events.jsonl`、`snapshots/` 都在 `.gitignore` 里，更新不会覆盖本机已经调好的模板和参数。

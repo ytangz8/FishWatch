@@ -1,0 +1,357 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FishWatch</title>
+<style>
+  :root {
+    --bg: #f4f5f2; --panel: #ffffff; --ink: #1d2320; --muted: #6b736e; --line: #dfe3dd;
+    --accent: #0f7b5f; --accent-ink: #ffffff; --warn: #b4521c; --hit: #16a34a; --roi: #2563eb; --sel: #ea7a12;
+    --mono: ui-monospace, "SF Mono", "Cascadia Mono", Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #121614; --panel: #1b201d; --ink: #e5e9e6; --muted: #8e978f; --line: #2c332f;
+            --accent: #34b089; --accent-ink: #0b1210; --warn: #f0965a; --hit: #4ade80; --roi: #60a5fa; --sel: #fb923c; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 14px/1.5 -apple-system, "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif; }
+  header { display: flex; align-items: center; gap: 12px; padding: 14px 20px; border-bottom: 1px solid var(--line);
+           background: var(--panel); position: sticky; top: 0; z-index: 2; flex-wrap: wrap; }
+  header h1 { font-size: 16px; margin: 0; letter-spacing: .02em; }
+  .pill { padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; border: 1px solid var(--line); }
+  .pill.on { background: var(--hit); color: #fff; border-color: transparent; }
+  .pill.off { color: var(--muted); }
+  .pill.err { background: var(--warn); color: #fff; border-color: transparent; }
+  .spacer { flex: 1; }
+  main { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 16px; padding: 16px 20px; max-width: 1400px; margin: 0 auto; }
+  @media (max-width: 960px) { main { grid-template-columns: 1fr; padding: 12px 16px; } }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; margin-bottom: 16px; }
+  section h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 10px; }
+  button { font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+           padding: 6px 12px; border-radius: 7px; cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+  button:disabled { opacity: .5; cursor: default; }
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+  .stat .v { font: 600 20px/1.2 var(--mono); }
+  .stat .k { font-size: 12px; color: var(--muted); }
+  .bar { position: relative; height: 10px; background: var(--line); border-radius: 5px; margin: 12px 0 4px; overflow: hidden; }
+  .bar .fill { position: absolute; inset: 0 auto 0 0; background: var(--muted); transition: width .15s; }
+  .bar .fill.hit { background: var(--hit); }
+  .bar .th { position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--warn); }
+  .msg { color: var(--warn); font-size: 13px; min-height: 1.5em; }
+  .preview { display: flex; gap: 14px; align-items: flex-start; flex-wrap: wrap; }
+  .preview figure { margin: 0; }
+  .preview figcaption { font-size: 12px; color: var(--muted); }
+  .preview img { display: block; max-width: 100%; image-rendering: pixelated; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); min-width: 40px; min-height: 40px; }
+  #roiPrev { max-height: 260px; }
+  #tplImg { max-height: 120px; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+  .canvas-wrap { position: relative; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: var(--bg); min-height: 120px; }
+  canvas { display: block; width: 100%; cursor: crosshair; touch-action: none; }
+  .empty { padding: 40px; text-align: center; color: var(--muted); }
+  .rect-inputs input { width: 72px; }
+  input, select { font: 13px var(--mono); padding: 5px 7px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); }
+  label.f { display: grid; grid-template-columns: 1fr 120px; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 13px; }
+  label.f small { display: block; color: var(--muted); font-size: 11px; }
+  label.f input, label.f select { width: 100%; }
+  #zoom { width: 160px; height: 160px; image-rendering: pixelated; border: 1px solid var(--line); border-radius: 4px; cursor: default; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  td { padding: 5px 4px; border-top: 1px solid var(--line); vertical-align: top; }
+  td.t { font-family: var(--mono); color: var(--muted); white-space: nowrap; }
+  .events { max-height: 420px; overflow: auto; }
+  a { color: var(--accent); }
+  .legend { font-size: 12px; color: var(--muted); }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin: 0 4px 0 10px; vertical-align: -1px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>FishWatch</h1>
+  <span id="statePill" class="pill off">连接中…</span>
+  <span id="dryPill" class="pill" hidden>DRY-RUN</span>
+  <span class="spacer"></span>
+  <button id="testBtn" title="3 秒后在目标位置双击一次">测试双击</button>
+  <button id="toggleBtn" class="primary">开始</button>
+</header>
+
+<main>
+  <div>
+    <section>
+      <h2>运行状态</h2>
+      <div class="stats">
+        <div class="stat"><div class="v" id="sScore">–</div><div class="k">匹配分数</div></div>
+        <div class="stat"><div class="v" id="sFps">–</div><div class="k">检测帧率</div></div>
+        <div class="stat"><div class="v" id="sHits">–</div><div class="k">本次触发</div></div>
+        <div class="stat"><div class="v" id="sLast">–</div><div class="k">上次触发</div></div>
+      </div>
+      <div class="bar"><div class="fill" id="scoreFill"></div><div class="th" id="thMark"></div></div>
+      <div class="msg" id="errMsg"></div>
+      <div class="preview">
+        <figure><img id="roiPrev" alt=""><figcaption>检测区域实时画面（框 = 最佳匹配位置）</figcaption></figure>
+        <figure><img id="tplImg" alt=""><figcaption>当前模板</figcaption></figure>
+      </div>
+    </section>
+
+    <section>
+      <h2>框选区域 / 模板</h2>
+      <div class="row">
+        <select id="monSel"></select>
+        <button id="shotBtn">刷新截图</button>
+        <span class="legend"><i style="background:var(--roi)"></i>检测区域<i style="background:var(--sel)"></i>当前选区<i style="background:var(--hit)"></i>固定点击点</span>
+      </div>
+      <div class="canvas-wrap"><canvas id="cv"></canvas><div class="empty" id="cvEmpty">先让上鱼图标出现在屏幕上，再点「刷新截图」，然后拖动鼠标框选</div></div>
+      <div class="row" style="margin-top:10px">
+        <canvas id="zoom" width="160" height="160"></canvas>
+        <div>
+          <div class="row rect-inputs">
+            x <input id="rx" type="number"> y <input id="ry" type="number">
+            w <input id="rw" type="number"> h <input id="rh" type="number">
+          </div>
+          <div class="row">
+            <button id="setTplBtn" class="primary">保存为模板</button>
+            <button id="setRoiBtn">设为检测区域</button>
+            <button id="setPtBtn">选区中心设为固定点击点</button>
+          </div>
+          <div class="legend" style="margin-left:0">模板：紧贴图标框选。检测区域：图标可能出现的整片范围（比模板大）。坐标为屏幕物理像素。</div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <div>
+    <section>
+      <h2>参数</h2>
+      <form id="cfgForm">
+        <label class="f"><span>匹配阈值<small>分数 ≥ 阈值算命中，0.80–0.92 常用</small></span><input name="threshold" type="number" step="0.01" min="0.3" max="1"></label>
+        <label class="f"><span>连续命中帧数<small>防抖，避免一闪而过的误判</small></span><input name="debounce" type="number" min="1"></label>
+        <label class="f"><span>冷却 (ms)<small>触发后多久内不再触发</small></span><input name="cooldown_ms" type="number" min="0"></label>
+        <label class="f"><span>检测间隔 (ms)</span><input name="interval_ms" type="number" min="10"></label>
+        <label class="f"><span>点击延迟 (ms)<small>命中后等多久再双击</small></span><input name="click_delay_ms" type="number" min="0"></label>
+        <label class="f"><span>双击间隔 (ms)</span><input name="double_click_gap_ms" type="number" min="10" max="400"></label>
+        <label class="f"><span>点击位置</span><select name="click_mode"><option value="match_center">图标中心</option><option value="fixed">固定点</option></select></label>
+        <label class="f"><span>灰度匹配<small>图标靠颜色区分时关闭</small></span><select name="grayscale"><option value="true">是</option><option value="false">否</option></select></label>
+        <label class="f"><span>点击后还原鼠标</span><select name="restore_cursor"><option value="true">是</option><option value="false">否</option></select></label>
+        <label class="f"><span>保存触发截图</span><select name="save_snapshots"><option value="true">是</option><option value="false">否</option></select></label>
+        <label class="f"><span>显示器编号<small>1 = 主屏，0 = 全部</small></span><input name="monitor" type="number" min="0"></label>
+        <div class="row"><button class="primary" type="submit">保存参数</button><span class="legend" id="cfgMsg"></span></div>
+      </form>
+      <div class="legend" style="margin-left:0">Windows 本机按 <b>F8</b> 可随时暂停 / 恢复</div>
+    </section>
+
+    <section>
+      <h2>事件日志</h2>
+      <div class="events"><table><tbody id="evBody"></tbody></table></div>
+    </section>
+  </div>
+</main>
+
+<script>
+const qs = new URLSearchParams(location.search);
+let TOKEN = qs.get("token") || "";
+try { if (TOKEN) localStorage.setItem("fw_token", TOKEN); else TOKEN = localStorage.getItem("fw_token") || ""; } catch (e) {}
+const tq = () => (TOKEN ? `token=${encodeURIComponent(TOKEN)}&` : "");
+const $ = (id) => document.getElementById(id);
+
+async function api(path, opts = {}) {
+  const res = await fetch(path, { ...opts, headers: { "Content-Type": "application/json", "X-Token": TOKEN, ...(opts.headers || {}) } });
+  if (res.status === 401) {
+    const t = prompt("请输入访问 token");
+    if (t !== null) { TOKEN = t; try { localStorage.setItem("fw_token", t); } catch (e) {} }
+    throw new Error("token 错误");
+  }
+  const data = res.headers.get("content-type")?.includes("json") ? await res.json() : null;
+  if (!res.ok) throw new Error(data?.detail || res.statusText);
+  return data;
+}
+
+// ---------------------------------------------------------------- state polling
+let CFG = null, formLoaded = false, tplVersion = 0;
+const KIND = { double_click: "双击", pause: "暂停", resume: "开始", template_saved: "保存模板" };
+
+function fmtTime(ts) { return ts ? ts.slice(11, 19) : "–"; }
+
+function render(st) {
+  const s = st.status; CFG = st.config;
+  const on = CFG.enabled;
+  const pill = $("statePill");
+  if (s.error) { pill.className = "pill err"; pill.textContent = on ? "监控中 · " + s.error : s.error; }
+  else { pill.className = "pill " + (on ? "on" : "off"); pill.textContent = on ? "监控中" : "已暂停"; }
+  $("dryPill").hidden = !s.dry_run;
+  $("toggleBtn").textContent = on ? "暂停" : "开始";
+  $("sScore").textContent = s.score.toFixed(3);
+  $("sFps").textContent = s.fps;
+  $("sHits").textContent = s.hits;
+  $("sLast").textContent = fmtTime(s.last_hit);
+  $("scoreFill").style.width = Math.max(0, s.score) * 100 + "%";
+  $("scoreFill").className = "fill" + (s.hit ? " hit" : "");
+  $("thMark").style.left = CFG.threshold * 100 + "%";
+  $("errMsg").textContent = s.error || "";
+  if (!formLoaded) { fillForm(CFG); formLoaded = true; }
+  renderEvents(st.events);
+  drawCanvas();
+}
+
+function renderEvents(evs) {
+  $("evBody").innerHTML = evs.map((e) => {
+    let d = "";
+    if (e.kind === "double_click") {
+      d = `(${e.x}, ${e.y})` + (e.score != null ? ` 分数 ${e.score}` : "") + (e.reason === "test" ? " 测试" : "") + (e.dry_run ? " dry-run" : "");
+      if (e.snapshot) d += ` <a href="/api/snapshot/${e.snapshot}?${tq()}" target="_blank">截图</a>`;
+    } else if (e.source) d = e.source === "hotkey" ? "F8 热键" : "网页";
+    else if (e.width) d = `${e.width}×${e.height}`;
+    return `<tr><td class="t">${e.ts.slice(5, 19).replace("T", " ")}</td><td>${KIND[e.kind] || e.kind}</td><td>${d}</td></tr>`;
+  }).join("") || `<tr><td class="legend">暂无事件</td></tr>`;
+}
+
+async function poll() {
+  try { render(await api("/api/state")); }
+  catch (e) { $("statePill").className = "pill err"; $("statePill").textContent = "连接失败"; }
+  setTimeout(poll, 500);
+}
+
+function refreshPreview() {
+  const img = $("roiPrev");
+  const next = new Image();
+  next.onload = () => { img.src = next.src; setTimeout(refreshPreview, 250); };
+  next.onerror = () => setTimeout(refreshPreview, 1000);
+  next.src = `/api/preview.jpg?${tq()}t=${Date.now()}`;
+}
+function refreshTemplate() { $("tplImg").src = `/api/template.png?${tq()}v=${++tplVersion}`; }
+
+// ---------------------------------------------------------------- form
+const BOOL_FIELDS = ["grayscale", "restore_cursor", "save_snapshots"];
+function fillForm(cfg) {
+  const f = $("cfgForm");
+  for (const el of f.elements) if (el.name && el.name in cfg) el.value = String(cfg[el.name]);
+}
+$("cfgForm").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const patch = {};
+  for (const el of ev.target.elements) {
+    if (!el.name) continue;
+    patch[el.name] = BOOL_FIELDS.includes(el.name) ? el.value === "true" : (el.type === "number" ? Number(el.value) : el.value);
+  }
+  try { await api("/api/config", { method: "POST", body: JSON.stringify(patch) }); $("cfgMsg").textContent = "已保存"; }
+  catch (e) { $("cfgMsg").textContent = e.message; }
+  setTimeout(() => ($("cfgMsg").textContent = ""), 2500);
+});
+
+$("toggleBtn").onclick = async () => {
+  if (!CFG) return;
+  try { await api("/api/config", { method: "POST", body: JSON.stringify({ enabled: !CFG.enabled }) }); } catch (e) { alert(e.message); }
+};
+$("testBtn").onclick = async () => {
+  try { const r = await api("/api/test_click?delay=3", { method: "POST" }); $("testBtn").textContent = `3 秒后双击 (${r.x}, ${r.y})`; }
+  catch (e) { alert(e.message); }
+  setTimeout(() => ($("testBtn").textContent = "测试双击"), 3500);
+};
+
+// ---------------------------------------------------------------- screenshot & selection
+const cv = $("cv"), ctx = cv.getContext("2d");
+let shot = null, mon = null, sel = null, drag = null;
+
+async function loadMonitors() {
+  try {
+    const ms = await api("/api/monitors");
+    $("monSel").innerHTML = ms.map((m, i) => `<option value="${i}">${i === 0 ? "全部显示器" : "显示器 " + i} · ${m.width}×${m.height}</option>`).join("");
+    $("monSel").value = String(Math.min(1, ms.length - 1));
+  } catch (e) {}
+}
+
+$("shotBtn").onclick = async () => {
+  $("shotBtn").disabled = true;
+  try {
+    const i = $("monSel").value;
+    const img = new Image();
+    await new Promise((ok, bad) => { img.onload = ok; img.onerror = () => bad(new Error("截图失败")); img.src = `/api/screenshot?${tq()}mon=${i}&t=${Date.now()}`; });
+    mon = await api("/api/screenshot/meta");
+    shot = img; sel = null;
+    cv.width = img.naturalWidth; cv.height = img.naturalHeight;
+    $("cvEmpty").hidden = true;
+    drawCanvas(); syncInputs(); drawZoom();
+  } catch (e) { alert(e.message); }
+  $("shotBtn").disabled = false;
+};
+
+function toImg(ev) {
+  const r = cv.getBoundingClientRect();
+  return {
+    x: Math.round(Math.min(Math.max(ev.clientX - r.left, 0), r.width) * cv.width / r.width),
+    y: Math.round(Math.min(Math.max(ev.clientY - r.top, 0), r.height) * cv.height / r.height),
+  };
+}
+cv.addEventListener("pointerdown", (ev) => { if (!shot) return; cv.setPointerCapture(ev.pointerId); drag = toImg(ev); sel = { x: drag.x, y: drag.y, w: 0, h: 0 }; });
+cv.addEventListener("pointermove", (ev) => {
+  if (!drag) return;
+  const p = toImg(ev);
+  sel = { x: Math.min(p.x, drag.x), y: Math.min(p.y, drag.y), w: Math.abs(p.x - drag.x), h: Math.abs(p.y - drag.y) };
+  drawCanvas(); syncInputs(); drawZoom();
+});
+cv.addEventListener("pointerup", () => { drag = null; });
+
+function syncInputs() {
+  if (!sel || !mon) { ["rx", "ry", "rw", "rh"].forEach((k) => ($(k).value = "")); return; }
+  $("rx").value = sel.x + mon.left; $("ry").value = sel.y + mon.top; $("rw").value = sel.w; $("rh").value = sel.h;
+}
+["rx", "ry", "rw", "rh"].forEach((k) => $(k).addEventListener("input", () => {
+  if (!mon) return;
+  sel = { x: +$("rx").value - mon.left, y: +$("ry").value - mon.top, w: +$("rw").value, h: +$("rh").value };
+  drawCanvas(); drawZoom();
+}));
+
+function css(v) { return getComputedStyle(document.documentElement).getPropertyValue(v).trim(); }
+function drawCanvas() {
+  if (!shot) return;
+  ctx.drawImage(shot, 0, 0);
+  const lw = Math.max(2, cv.width / 600);
+  ctx.lineWidth = lw;
+  if (CFG?.roi && mon) {
+    ctx.strokeStyle = css("--roi");
+    ctx.strokeRect(CFG.roi.left - mon.left, CFG.roi.top - mon.top, CFG.roi.width, CFG.roi.height);
+  }
+  if (CFG?.click_mode === "fixed" && CFG.click_point && mon) {
+    const x = CFG.click_point.x - mon.left, y = CFG.click_point.y - mon.top, r = lw * 5;
+    ctx.strokeStyle = css("--hit");
+    ctx.beginPath(); ctx.moveTo(x - r, y); ctx.lineTo(x + r, y); ctx.moveTo(x, y - r); ctx.lineTo(x, y + r); ctx.stroke();
+  }
+  if (sel && sel.w && sel.h) { ctx.strokeStyle = css("--sel"); ctx.strokeRect(sel.x, sel.y, sel.w, sel.h); }
+}
+function drawZoom() {
+  const z = $("zoom"), zc = z.getContext("2d");
+  zc.clearRect(0, 0, z.width, z.height);
+  if (!shot || !sel || sel.w < 1 || sel.h < 1) return;
+  const s = Math.min(z.width / sel.w, z.height / sel.h);
+  zc.imageSmoothingEnabled = false;
+  zc.drawImage(shot, sel.x, sel.y, sel.w, sel.h, 0, 0, sel.w * s, sel.h * s);
+}
+
+function selRect() {
+  if (!sel || sel.w < 4 || sel.h < 4) { alert("请先框选一个至少 4×4 的区域"); return null; }
+  return { left: sel.x + mon.left, top: sel.y + mon.top, width: sel.w, height: sel.h };
+}
+$("setTplBtn").onclick = async () => {
+  const r = selRect(); if (!r) return;
+  try { await api("/api/template", { method: "POST", body: JSON.stringify(r) }); refreshTemplate(); }
+  catch (e) { alert(e.message); }
+};
+$("setRoiBtn").onclick = async () => {
+  const r = selRect(); if (!r) return;
+  try { await api("/api/config", { method: "POST", body: JSON.stringify({ roi: r, monitor: Number($("monSel").value) }) }); }
+  catch (e) { alert(e.message); }
+};
+$("setPtBtn").onclick = async () => {
+  const r = selRect(); if (!r) return;
+  const pt = { x: r.left + Math.floor(r.width / 2), y: r.top + Math.floor(r.height / 2) };
+  try {
+    await api("/api/config", { method: "POST", body: JSON.stringify({ click_point: pt, click_mode: "fixed" }) });
+    $("cfgForm").elements.click_mode.value = "fixed";
+  } catch (e) { alert(e.message); }
+};
+
+loadMonitors(); poll(); refreshPreview(); refreshTemplate();
+</script>
+</body>
+</html>

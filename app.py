@@ -181,7 +181,12 @@ def test_click(delay: float = 3.0):
 
 # ---------------------------------------------------------------- main
 def _lan_ips():
+    """列出本机所有 IPv4。默认路由那块网卡可能是 VPN / 虚拟网卡，所以全部列出。"""
     ips = set()
+    try:
+        ips.update(socket.gethostbyname_ex(socket.gethostname())[2])
+    except OSError:
+        pass
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("8.8.8.8", 80))
@@ -189,7 +194,9 @@ def _lan_ips():
         s.close()
     except OSError:
         pass
-    return sorted(ips) or ["127.0.0.1"]
+    ips.discard("127.0.0.1")
+    # 常见局域网网段排前面
+    return sorted(ips, key=lambda ip: (not ip.startswith(("192.168.", "10.")), ip)) or ["127.0.0.1"]
 
 
 if __name__ == "__main__":
