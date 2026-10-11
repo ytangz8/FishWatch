@@ -1,0 +1,15 @@
+{"ts": "2026-10-11T13:52:48.326", "kind": "template_saved", "width": 44, "height": 38}
+{"ts": "2026-10-11T13:52:59.427", "kind": "double_click", "x": 550, "y": 1024, "dry_run": false, "reason": "test", "score": null}
+{"ts": "2026-10-11T13:53:45.458", "kind": "resume", "source": "web"}
+{"ts": "2026-10-11T13:55:46.651", "kind": "double_click", "snapshot": "20261011_135546_485.jpg", "x": 550, "y": 1024, "dry_run": false, "reason": "hit", "score": 0.767}
+{"ts": "2026-10-11T13:55:49.825", "kind": "double_click", "snapshot": "20261011_135549_668.jpg", "x": 550, "y": 1024, "dry_run": false, "reason": "hit", "score": 0.915}
+{"ts": "2026-10-11T13:55:53.024", "kind": "double_click", "snapshot": "20261011_135552_868.jpg", "x": 550, "y": 1024, "dry_run": false, "reason": "hit", "score": 0.931}
+{"ts": "2026-10-11T13:55:56.191", "kind": "double_click", "snapshot": "20261011_135556_039.jpg", "x": 550, "y": 1024, "dry_run": false, "reason": "hit", "score": 0.922}
+{"ts": "2026-10-11T13:55:59.375", "kind": "double_click", "snapshot": "20261011_135559_224.jpg", "x": 550, "y": 1024, "dry_run": false, "reason": "hit", "score": 0.921}
+{"ts": "2026-10-11T13:56:02.553", "kind": "double_click", "snapshot": "20261011_135602_399.jpg", "x": 550, "y": 1024, "dry_run": false, "reason": "hit", "score": 0.921}
+{"ts": "2026-10-11T13:56:05.718", "kind": "double_click", "snapshot": "20261011_135605_562.jpg", "x": 550, "y": 1024, "dry_run": false, "reason": "hit", "score": 0.922}
+{"ts": "2026-10-11T13:56:08.898", "kind": "double_click", "snapshot": "20261011_135608_746.jpg", "x": 550, "y": 1024, "dry_run": false, "reason": "hit", "score": 0.927}
+{"ts": "2026-10-11T13:56:12.068", "kind": "double_click", "snapshot": "20261011_135611_914.jpg", "x": 550, "y": 1024, "dry_run": false, "reason": "hit", "score": 0.928}
+{"ts": "2026-10-11T13:56:19.463", "kind": "double_click", "snapshot": "20261011_135619_310.jpg", "x": 550, "y": 1024, "dry_run": false, "reason": "hit", "score": 0.808}
+{"ts": "2026-10-11T13:56:22.636", "kind": "double_click", "snapshot": "20261011_135622_482.jpg", "x": 550, "y": 1024, "dry_run": false, "reason": "hit", "score": 0.927}
+{"ts": "2026-10-11T13:56:29.849", "kind": "double_click", "snapshot": "20261011_135629_696.jpg", "x": 550, "y": 1024, "dry_run": false, "reason": "hit", "score": 0.777}
