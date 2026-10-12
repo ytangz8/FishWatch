@@ -79,6 +79,7 @@ def state():
         "keep_template_exists": (BASE / cfg["keep_template"]).exists(),
         "keep2_template_exists": (BASE / cfg["keep2_template"]).exists(),
         "landed_template_exists": (BASE / cfg["landed_template"]).exists(),
+        "cast_template_exists": (BASE / cfg["cast_template"]).exists(),
         "key_names": {str(k): v for k, v in win_input.KEY_NAMES.items()},
         "events": list(engine.events)[-50:][::-1],
     }
@@ -149,6 +150,33 @@ def clear_template(target: str):
     store.update({"keep2_roi": None})
     engine._record("template_cleared", target=target)
     return {"ok": True}
+
+
+@app.get("/api/cast_preview.jpg")
+def cast_preview():
+    if engine.cast_preview_jpeg is None:
+        raise HTTPException(404, "暂无预览")
+    return Response(engine.cast_preview_jpeg, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+
+@app.post("/api/test_cast")
+def test_cast(delay: float = 3.0):
+    """延迟几秒后完整执行一次放线流程（右键 → 等停止标志 → 右键），用来确认游戏能收到右键。"""
+    cfg = store.snapshot()
+    try:
+        engine.target_ready(cfg, "cast")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    delay = min(max(delay, 0), 10)
+
+    def run():
+        import time
+        time.sleep(delay)
+        c = dict(store.snapshot(), cast_delay_ms=0)
+        engine.run_cast_stage(c)
+
+    threading.Thread(target=run, daemon=True).start()
+    return {"ok": True, "delay": delay}
 
 
 @app.get("/api/landed_preview.jpg")

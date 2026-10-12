@@ -94,7 +94,13 @@ TARGETS = {
                "threshold": "keep_threshold", "grayscale": "keep_grayscale"},
     "landed": {"label": "结算标志", "roi": "landed_roi", "template": "landed_template",
                "threshold": "landed_threshold", "grayscale": "landed_grayscale"},
+    "cast":   {"label": "放线停止标志", "roi": "cast_roi", "template": "cast_template",
+               "threshold": "cast_threshold", "grayscale": "cast_grayscale"},
 }
+
+
+class Aborted(Exception):
+    """一轮自动操作进行中被暂停（网页暂停或 F8）。"""
 
 
 # ---------------------------------------------------------------- engine
@@ -126,11 +132,15 @@ class Engine:
             "keep1_score": None,
             "keep2_score": None,
             "landed_score": None,
+            "cast_score": None,
         }
         self.preview_jpeg = None
         self.keep_preview_jpeg = None
         self.keep2_preview_jpeg = None
         self.landed_preview_jpeg = None
+        self.cast_preview_jpeg = None
+        self._hotkey_prev = False
+        self._guard = False        # True = 正在进行一轮自动操作，暂停时要中止
         self.last_full = None      # (monitor_rect, bgr image) 给网页框选用
         self.last_match = None     # 最近一次匹配到的屏幕坐标中心
         self.events = collections.deque(self._load_events(), maxlen=300)
@@ -333,9 +343,26 @@ class Engine:
             self._sleep(cfg["interval_ms"] / 1000)
         return False, {"mode": mode, "stopped": True}
 
+    def _poll_hotkey(self, cfg=None):
+        """检测热键按下沿，切换暂停/恢复。返回最新配置。"""
+        cfg = cfg or self.store.snapshot()
+        hk = win_input.key_down(cfg["hotkey_vk"])
+        if hk and not self._hotkey_prev:
+            self.set_enabled(not cfg["enabled"], source="hotkey")
+            cfg = self.store.snapshot()
+        self._hotkey_prev = hk
+        return cfg
+
     def _sleep(self, seconds):
-        """可被停止信号打断的 sleep。"""
-        self._stop.wait(max(0.0, seconds))
+        """可被停止信号打断的 sleep。自动操作进行中会持续检查热键，一旦被暂停就抛 Aborted。"""
+        end = time.perf_counter() + max(0.0, seconds)
+        while True:
+            if self._guard and not self._poll_hotkey()["enabled"]:
+                raise Aborted()
+            left = end - time.perf_counter()
+            if left <= 0 or self._stop.is_set():
+                return
+            self._stop.wait(min(left, 0.02))
 
     def run_keep_stage(self, cfg, press=True):
         """双击上鱼后调用：等 keep_delay_ms，然后在 keep_window_ms 内反复检测入护图标。
@@ -394,14 +421,77 @@ class Engine:
             snapshot=snap,
         )
 
+    # ---- 重新放线 -------------------------------------------------
+    def cast_point(self, cfg):
+        """放线时右键点哪里：fish_point = 和双击上鱼同一个位置；cursor = 当前光标位置（不移动）。"""
+        if cfg["cast_click_mode"] == "cursor":
+            return None
+        return self.click_target(cfg)
+
+    def run_cast_stage(self, cfg):
+        """入护/释放之后：右键放线 → 等「放线停止标志」出现 → 再右键停止。"""
+        try:
+            self.target_ready(cfg, "cast")
+        except ValueError as e:
+            self.status["error"] = str(e)
+            return self._record("cast_skipped", reason=str(e))
+
+        self.status["phase"] = "cast_wait"
+        self._sleep(cfg["cast_delay_ms"] / 1000)
+        pt = self.cast_point(cfg)
+        x, y = pt if pt else (None, None)
+        real = win_input.right_click(x, y, cfg["right_hold_ms"], cfg["restore_cursor"])
+        self._record("cast_start", x=x, y=y, dry_run=not real)
+
+        self.status["phase"] = "casting"
+        t0 = time.perf_counter()
+        deadline = t0 + cfg["cast_timeout_ms"] / 1000
+        consec, best, best_img, best_box = 0, -1.0, None, None
+        while not self._stop.is_set():
+            score, img, box = self.target_score(cfg, "cast")
+            self.status["cast_score"] = round(score, 4)
+            if score > best:
+                best, best_img, best_box = score, img, box
+            consec = consec + 1 if score >= cfg["cast_threshold"] else 0
+            if consec >= cfg["debounce"]:
+                break
+            if time.perf_counter() >= deadline:
+                self.status["phase"] = "idle"
+                return self._record("cast_timeout", waited_ms=int((time.perf_counter() - t0) * 1000),
+                                    best=round(best, 3))
+            self._sleep(cfg["interval_ms"] / 1000)
+        waited = int((time.perf_counter() - t0) * 1000)
+
+        self._sleep(cfg["cast_stop_delay_ms"] / 1000)
+        real = win_input.right_click(x, y, cfg["right_hold_ms"], cfg["restore_cursor"])
+        snap = None
+        if cfg["save_snapshots"] and best_img is not None:
+            snap = self._save_snapshot(best_img, best_box, prefix="cast_")
+        self.status["phase"] = "idle"
+        return self._record("cast_stop", waited_ms=waited, score=round(best, 3), dry_run=not real, snapshot=snap)
+
+    def run_round(self, cfg):
+        """双击上鱼之后的整套流程：等拉上来 → 入护/释放 → 重新放线。暂停时中止。"""
+        self._guard = True
+        try:
+            if cfg["keep_enabled"]:
+                ev = self.run_keep_stage(cfg)
+                if cfg["cast_enabled"] and ev.get("kind") == "keep":
+                    self.run_cast_stage(cfg)
+        except Aborted:
+            self._record("aborted", phase=self.status["phase"])
+        finally:
+            self._guard = False
+            self.status["phase"] = "idle"
+
     def set_enabled(self, on: bool, source="web"):
         self.store.update({"enabled": on})
         self._record("resume" if on else "pause", source=source)
 
     def _update_keep_preview(self, cfg):
         """空闲时也刷新入护 / 结算标志区域的分数和预览，方便在网页上调阈值。"""
-        status_key = {"keep": "keep1_score", "keep2": "keep2_score", "landed": "landed_score"}
-        for target in ("keep", "keep2", "landed"):
+        status_key = {"keep": "keep1_score", "keep2": "keep2_score", "landed": "landed_score", "cast": "cast_score"}
+        for target in ("keep", "keep2", "landed", "cast"):
             spec = TARGETS[target]
             try:
                 score, img, (x, y, w, h) = self.target_score(cfg, target)
@@ -445,18 +535,10 @@ class Engine:
         gone_since = None     # 上锁期间图标开始消失的时刻
         frames, fps_t0 = 0, time.perf_counter()
         last_preview = 0.0
-        hotkey_prev = False
 
         while not self._stop.is_set():
             t0 = time.perf_counter()
-            cfg = self.store.snapshot()
-
-            # 热键：按下沿切换暂停
-            hk = win_input.key_down(cfg["hotkey_vk"])
-            if hk and not hotkey_prev:
-                self.set_enabled(not cfg["enabled"], source="hotkey")
-                cfg = self.store.snapshot()
-            hotkey_prev = hk
+            cfg = self._poll_hotkey()  # 热键：按下沿切换暂停
 
             roi = cfg.get("roi")
             tpl = self._template(cfg)
@@ -502,8 +584,7 @@ class Engine:
                 self._record("double_click", snapshot=snap, **info)
                 self.status["hits"] += 1
                 self.status["last_hit"] = self.events[-1]["ts"]
-                if cfg["keep_enabled"]:
-                    self.run_keep_stage(cfg)
+                self.run_round(cfg)
                 last_fire = time.perf_counter()  # 冷却从整轮（双击 + 入护）结束后开始算
                 consec = 0
                 armed, gone_since = False, None
