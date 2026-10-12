@@ -30,8 +30,6 @@ if IS_WIN:
     INPUT_MOUSE = 0
     MOUSEEVENTF_LEFTDOWN = 0x0002
     MOUSEEVENTF_LEFTUP = 0x0004
-    MOUSEEVENTF_RIGHTDOWN = 0x0008
-    MOUSEEVENTF_RIGHTUP = 0x0010
 
     class MOUSEINPUT(ctypes.Structure):
         _fields_ = [
@@ -164,8 +162,8 @@ def press_key(vk: int, hold_ms: int = 40) -> bool:
     return True
 
 
-def right_click(x=None, y=None, hold_ms: int = 50, restore_cursor: bool = True) -> bool:
-    """单击右键。给了 (x, y) 就先移过去，否则在当前光标位置点。返回 True 表示真实执行。"""
+def left_click(x=None, y=None, hold_ms: int = 50, restore_cursor: bool = True) -> bool:
+    """单击左键。给了 (x, y) 就先移过去，否则在当前光标位置点。返回 True 表示真实执行。"""
     if not IS_WIN:
         return False
     old = None
@@ -173,9 +171,9 @@ def right_click(x=None, y=None, hold_ms: int = 50, restore_cursor: bool = True) 
         old = get_cursor_pos() if restore_cursor else None
         set_cursor_pos(x, y)
         time.sleep(0.015)
-    _send_mouse(MOUSEEVENTF_RIGHTDOWN)
+    _send_mouse(MOUSEEVENTF_LEFTDOWN)
     time.sleep(max(hold_ms, 10) / 1000)
-    _send_mouse(MOUSEEVENTF_RIGHTUP)
+    _send_mouse(MOUSEEVENTF_LEFTUP)
     if old is not None:
         time.sleep(0.03)
         set_cursor_pos(*old)

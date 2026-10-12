@@ -423,13 +423,13 @@ class Engine:
 
     # ---- 重新放线 -------------------------------------------------
     def cast_point(self, cfg):
-        """放线时右键点哪里：fish_point = 和双击上鱼同一个位置；cursor = 当前光标位置（不移动）。"""
+        """放线时左键点哪里：fish_point = 和双击上鱼同一个位置；cursor = 当前光标位置（不移动）。"""
         if cfg["cast_click_mode"] == "cursor":
             return None
         return self.click_target(cfg)
 
     def run_cast_stage(self, cfg):
-        """入护/释放之后：右键放线 → 等「放线停止标志」出现 → 再右键停止。"""
+        """入护/释放之后：左键放线 → 等「放线停止标志」出现 → 再左键停止。"""
         try:
             self.target_ready(cfg, "cast")
         except ValueError as e:
@@ -440,7 +440,7 @@ class Engine:
         self._sleep(cfg["cast_delay_ms"] / 1000)
         pt = self.cast_point(cfg)
         x, y = pt if pt else (None, None)
-        real = win_input.right_click(x, y, cfg["right_hold_ms"], cfg["restore_cursor"])
+        real = win_input.left_click(x, y, cfg["cast_hold_ms"], cfg["restore_cursor"])
         self._record("cast_start", x=x, y=y, dry_run=not real)
 
         self.status["phase"] = "casting"
@@ -463,7 +463,7 @@ class Engine:
         waited = int((time.perf_counter() - t0) * 1000)
 
         self._sleep(cfg["cast_stop_delay_ms"] / 1000)
-        real = win_input.right_click(x, y, cfg["right_hold_ms"], cfg["restore_cursor"])
+        real = win_input.left_click(x, y, cfg["cast_hold_ms"], cfg["restore_cursor"])
         snap = None
         if cfg["save_snapshots"] and best_img is not None:
             snap = self._save_snapshot(best_img, best_box, prefix="cast_")

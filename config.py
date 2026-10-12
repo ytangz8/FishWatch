@@ -43,11 +43,11 @@ DEFAULTS = {
     "cast_template": "cast_template.png",
     "cast_threshold": 0.85,
     "cast_grayscale": True,
-    "cast_delay_ms": 1500,             # 按完入护/释放后等多久再右键放线（等结算界面关闭）
-    "cast_timeout_ms": 30000,          # 放线后最多等多久停止标志；超时不再按右键
-    "cast_stop_delay_ms": 0,           # 看到停止标志后再等多久按右键停止
-    "cast_click_mode": "fish_point",   # fish_point = 在双击上鱼的位置点右键；cursor = 当前光标位置
-    "right_hold_ms": 50,
+    "cast_delay_ms": 1500,             # 按完入护/释放后等多久再左键放线（等结算界面关闭）
+    "cast_timeout_ms": 30000,          # 放线后最多等多久停止标志；超时不再按左键
+    "cast_stop_delay_ms": 0,           # 看到停止标志后再等多久按左键停止
+    "cast_click_mode": "fish_point",   # fish_point = 在双击上鱼的位置点左键；cursor = 当前光标位置
+    "cast_hold_ms": 50,
     "keep2_roi": None,                 # 第二个入护图标（可选），满足任意一个就入护
     "keep2_template": "keep2_template.png",
 
@@ -97,7 +97,7 @@ EDITABLE = {
     "cast_timeout_ms": int,
     "cast_stop_delay_ms": int,
     "cast_click_mode": str,
-    "right_hold_ms": int,
+    "cast_hold_ms": int,
     "landed_mode": str,
     "landed_roi": dict,
     "landed_threshold": float,
@@ -126,7 +126,7 @@ RANGES = {
     "cast_delay_ms": (0, 30_000),
     "cast_timeout_ms": (1000, 600_000),
     "cast_stop_delay_ms": (0, 10_000),
-    "right_hold_ms": (10, 1000),
+    "cast_hold_ms": (10, 1000),
     "landed_gone_ms": (50, 30_000),
     "landed_timeout_ms": (1000, 600_000),
 }
