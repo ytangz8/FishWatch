@@ -82,6 +82,18 @@ def match(img_bgr: np.ndarray, tpl_bgr: np.ndarray, tpl_gray: np.ndarray, graysc
     return float(max_v), max_loc
 
 
+# ---------------------------------------------------------------- targets
+# 三类检测目标各自对应的配置字段
+TARGETS = {
+    "fish":   {"label": "上鱼图标", "roi": "roi", "template": "template",
+               "threshold": "threshold", "grayscale": "grayscale"},
+    "keep":   {"label": "入护判定", "roi": "keep_roi", "template": "keep_template",
+               "threshold": "keep_threshold", "grayscale": "keep_grayscale"},
+    "landed": {"label": "结算标志", "roi": "landed_roi", "template": "landed_template",
+               "threshold": "landed_threshold", "grayscale": "landed_grayscale"},
+}
+
+
 # ---------------------------------------------------------------- engine
 class Engine:
     def __init__(self, store, base_dir: Path, grabber=None):
@@ -106,11 +118,13 @@ class Engine:
             "last_hit": None,
             "error": None,
             "dry_run": not win_input.IS_WIN,
-            "phase": "idle",       # idle / keep_wait / keep_check
+            "phase": "idle",       # idle / landing / keep_wait / keep_check
             "keep_score": None,
+            "landed_score": None,
         }
         self.preview_jpeg = None
         self.keep_preview_jpeg = None
+        self.landed_preview_jpeg = None
         self.last_full = None      # (monitor_rect, bgr image) 给网页框选用
         self.last_match = None     # 最近一次匹配到的屏幕坐标中心
         self.events = collections.deque(self._load_events(), maxlen=300)
@@ -119,7 +133,7 @@ class Engine:
     def _restore_migrated_templates(self):
         """撤销已回退版本（多模板库）做过的迁移：它把 template.png 改名成 template.png.migrated。"""
         cfg = self.store.snapshot()
-        for name in {cfg["template"], cfg["keep_template"]}:
+        for name in {cfg["template"], cfg["keep_template"], cfg["landed_template"]}:
             dst = self.base / name
             src = dst.with_name(dst.name + ".migrated")
             if not dst.exists() and src.exists():
@@ -160,7 +174,7 @@ class Engine:
             raise ValueError("选区超出截图范围")
         crop = img[y:y + h, x:x + w]
         cfg = self.store.snapshot()
-        name = cfg["keep_template"] if target == "keep" else cfg["template"]
+        name = cfg[TARGETS[target]["template"]]
         cv2.imwrite(str(self.base / name), crop)
         return {"width": w, "height": h}
 
@@ -226,26 +240,71 @@ class Engine:
         return None
 
     # ---- 入护判定 -------------------------------------------------
-    def keep_ready(self, cfg):
+    def target_ready(self, cfg, target):
         """返回 (roi, (tpl_bgr, tpl_gray)) 或抛出 ValueError 说明缺什么。"""
-        roi = cfg.get("keep_roi")
+        spec = TARGETS[target]
+        roi = cfg.get(spec["roi"])
         if not roi:
-            raise ValueError("入护判定：尚未设置检测区域")
-        tpl = self._load_template(cfg["keep_template"])
+            raise ValueError(f"{spec['label']}：尚未设置检测区域")
+        tpl = self._load_template(cfg[spec["template"]])
         if tpl is None:
-            raise ValueError("入护判定：尚未保存入护图标模板")
+            raise ValueError(f"{spec['label']}：尚未保存模板")
         th, tw = tpl[1].shape
         if tw > roi["width"] or th > roi["height"]:
-            raise ValueError("入护判定：模板比检测区域还大")
+            raise ValueError(f"{spec['label']}：模板比检测区域还大")
         return roi, tpl
 
-    def keep_score(self, cfg, grabber=None):
-        """对入护区域截一帧并匹配，返回 (score, img, (x, y, w, h))。"""
-        roi, (tpl_bgr, tpl_gray) = self.keep_ready(cfg)
-        img = (grabber or self.grabber).grab(roi)
-        score, (mx, my) = match(img, tpl_bgr, tpl_gray, cfg["keep_grayscale"])
+    def target_score(self, cfg, target):
+        """对目标区域截一帧并匹配，返回 (score, img, (x, y, w, h))。"""
+        spec = TARGETS[target]
+        roi, (tpl_bgr, tpl_gray) = self.target_ready(cfg, target)
+        img = self.grabber.grab(roi)
+        score, (mx, my) = match(img, tpl_bgr, tpl_gray, cfg[spec["grayscale"]])
         th, tw = tpl_gray.shape
         return score, img, (mx, my, tw, th)
+
+    def keep_ready(self, cfg):
+        return self.target_ready(cfg, "keep")
+
+    def keep_score(self, cfg):
+        return self.target_score(cfg, "keep")
+
+    def wait_landed(self, cfg):
+        """双击后等鱼真正拉上来。返回 (ok, info)。ok=False 表示超时或被停止，此时不应按任何键。
+
+        landed_mode:
+          fixed     —— 不检测，直接视为已拉上来（旧行为，靠 keep_delay_ms 固定等待）
+          marker    —— 等「结算标志」模板连续命中 debounce 帧（比如结算界面上的按键提示、边框）
+          fish_gone —— 等上鱼图标连续消失 landed_gone_ms（适用于拉鱼时图标一直在、拉上来才消失的情况）
+        """
+        mode = cfg["landed_mode"]
+        if mode == "fixed":
+            return True, {"mode": mode}
+        t0 = time.perf_counter()
+        deadline = t0 + cfg["landed_timeout_ms"] / 1000
+        self.status["phase"] = "landing"
+        consec, gone_since, best = 0, None, 0.0
+        while not self._stop.is_set():
+            now = time.perf_counter()
+            if now >= deadline:
+                return False, {"mode": mode, "waited_ms": int((now - t0) * 1000), "best": round(best, 3)}
+            if mode == "marker":
+                score, _, _ = self.target_score(cfg, "landed")
+                best = max(best, score)
+                self.status["landed_score"] = round(score, 4)
+                consec = consec + 1 if score >= cfg["landed_threshold"] else 0
+                if consec >= cfg["debounce"]:
+                    return True, {"mode": mode, "waited_ms": int((now - t0) * 1000), "score": round(score, 3)}
+            else:  # fish_gone
+                score, _, _ = self.target_score(cfg, "fish")
+                if score >= cfg["threshold"]:
+                    gone_since = None
+                elif gone_since is None:
+                    gone_since = now
+                elif (now - gone_since) * 1000 >= cfg["landed_gone_ms"]:
+                    return True, {"mode": mode, "waited_ms": int((now - t0) * 1000)}
+            self._sleep(cfg["interval_ms"] / 1000)
+        return False, {"mode": mode, "stopped": True}
 
     def _sleep(self, seconds):
         """可被停止信号打断的 sleep。"""
@@ -257,9 +316,19 @@ class Engine:
         """
         try:
             self.keep_ready(cfg)
+            if cfg["landed_mode"] == "marker":
+                self.target_ready(cfg, "landed")
         except ValueError as e:
             self.status["error"] = str(e)
             return self._record("keep_skipped", reason=str(e))
+
+        landed, info = self.wait_landed(cfg)
+        if not landed:
+            # 没等到拉上来：宁可什么都不按，也不要在拉鱼途中误按释放
+            self.status["phase"] = "idle"
+            return self._record("keep_timeout", **info)
+        if cfg["landed_mode"] != "fixed":
+            self._record("landed", **info)
 
         self.status["phase"] = "keep_wait"
         self._sleep(cfg["keep_delay_ms"] / 1000)
@@ -302,20 +371,22 @@ class Engine:
         self._record("resume" if on else "pause", source=source)
 
     def _update_keep_preview(self, cfg):
-        """空闲时也刷新入护区域的分数和预览，方便在网页上调阈值。"""
-        try:
-            score, img, (x, y, w, h) = self.keep_score(cfg)
-        except ValueError:
-            self.status["keep_score"] = None
-            self.keep_preview_jpeg = None
-            return
-        self.status["keep_score"] = round(score, 4)
-        vis = np.ascontiguousarray(img).copy()
-        color = (0, 200, 0) if score >= cfg["keep_threshold"] else (160, 160, 160)
-        cv2.rectangle(vis, (x, y), (x + w, y + h), color, 2)
-        ok, buf = cv2.imencode(".jpg", vis, [cv2.IMWRITE_JPEG_QUALITY, 75])
-        if ok:
-            self.keep_preview_jpeg = buf.tobytes()
+        """空闲时也刷新入护 / 结算标志区域的分数和预览，方便在网页上调阈值。"""
+        for target in ("keep", "landed"):
+            spec = TARGETS[target]
+            try:
+                score, img, (x, y, w, h) = self.target_score(cfg, target)
+            except ValueError:
+                self.status[f"{target}_score"] = None
+                setattr(self, f"{target}_preview_jpeg", None)
+                continue
+            self.status[f"{target}_score"] = round(score, 4)
+            vis = np.ascontiguousarray(img).copy()
+            color = (0, 200, 0) if score >= cfg[spec["threshold"]] else (160, 160, 160)
+            cv2.rectangle(vis, (x, y), (x + w, y + h), color, 2)
+            ok, buf = cv2.imencode(".jpg", vis, [cv2.IMWRITE_JPEG_QUALITY, 75])
+            if ok:
+                setattr(self, f"{target}_preview_jpeg", buf.tobytes())
 
     # ---- main loop -----------------------------------------------
     def start(self):

@@ -21,7 +21,7 @@ from fastapi import FastAPI, HTTPException, Request  # noqa: E402
 from fastapi.responses import FileResponse, JSONResponse, Response  # noqa: E402
 
 from config import ConfigError, ConfigStore  # noqa: E402
-from engine import Engine  # noqa: E402
+from engine import TARGETS, Engine  # noqa: E402
 
 BASE = Path(__file__).resolve().parent
 
@@ -77,6 +77,7 @@ def state():
         "config": cfg,
         "template_exists": tpl.exists(),
         "keep_template_exists": (BASE / cfg["keep_template"]).exists(),
+        "landed_template_exists": (BASE / cfg["landed_template"]).exists(),
         "key_names": {str(k): v for k, v in win_input.KEY_NAMES.items()},
         "events": list(engine.events)[-50:][::-1],
     }
@@ -130,10 +131,19 @@ def keep_preview():
     return Response(engine.keep_preview_jpeg, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
 
 
+@app.get("/api/landed_preview.jpg")
+def landed_preview():
+    if engine.landed_preview_jpeg is None:
+        raise HTTPException(404, "暂无预览")
+    return Response(engine.landed_preview_jpeg, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+
 @app.get("/api/template.png")
 def template_img(target: str = "fish"):
     cfg = store.snapshot()
-    p = BASE / (cfg["keep_template"] if target == "keep" else cfg["template"])
+    if target not in TARGETS:
+        raise HTTPException(400, "未知目标")
+    p = BASE / cfg[TARGETS[target]["template"]]
     if not p.exists():
         raise HTTPException(404, "没有模板")
     return FileResponse(p, headers={"Cache-Control": "no-store"})
@@ -141,8 +151,8 @@ def template_img(target: str = "fish"):
 
 @app.post("/api/template")
 async def save_template(request: Request, target: str = "fish"):
-    if target not in ("fish", "keep"):
-        raise HTTPException(400, "target 只能是 fish 或 keep")
+    if target not in TARGETS:
+        raise HTTPException(400, "target 只能是 fish / keep / landed")
     rect = await request.json()
     try:
         r = {k: int(rect[k]) for k in ("left", "top", "width", "height")}
@@ -152,7 +162,7 @@ async def save_template(request: Request, target: str = "fish"):
     except (ValueError, KeyError) as e:
         raise HTTPException(400, str(e))
     # 若还没有对应的检测区域，自动以模板为中心向外扩 60px
-    roi_key = "keep_roi" if target == "keep" else "roi"
+    roi_key = TARGETS[target]["roi"]
     if not store.snapshot().get(roi_key):
         mon = engine.last_full[0]
         pad = 60

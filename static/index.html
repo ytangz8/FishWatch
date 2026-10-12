@@ -7,14 +7,15 @@
 <style>
   :root {
     --bg: #f4f5f2; --panel: #ffffff; --ink: #1d2320; --muted: #6b736e; --line: #dfe3dd;
-    --accent: #0f7b5f; --accent-ink: #ffffff; --warn: #b4521c; --hit: #16a34a; --roi: #2563eb; --sel: #ea7a12; --keep: #9333ea;
+    --accent: #0f7b5f; --accent-ink: #ffffff; --warn: #b4521c; --hit: #16a34a; --roi: #2563eb; --sel: #ea7a12; --keep: #9333ea; --land: #0891b2;
     --mono: ui-monospace, "SF Mono", "Cascadia Mono", Consolas, monospace;
   }
   @media (prefers-color-scheme: dark) {
     :root { --bg: #121614; --panel: #1b201d; --ink: #e5e9e6; --muted: #8e978f; --line: #2c332f;
-            --accent: #34b089; --accent-ink: #0b1210; --warn: #f0965a; --hit: #4ade80; --roi: #60a5fa; --sel: #fb923c; --keep: #c084fc; }
+            --accent: #34b089; --accent-ink: #0b1210; --warn: #f0965a; --hit: #4ade80; --roi: #60a5fa; --sel: #fb923c; --keep: #c084fc; --land: #22d3ee; }
   }
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
   body { margin: 0; background: var(--bg); color: var(--ink);
          font: 14px/1.5 -apple-system, "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif; }
   header { display: flex; align-items: center; gap: 12px; padding: 14px 20px; border-bottom: 1px solid var(--line);
@@ -66,6 +67,7 @@
   a { color: var(--accent); }
   .legend { font-size: 12px; color: var(--muted); }
   .bar.keep .fill.hit { background: var(--keep); }
+  .bar.land .fill.hit { background: var(--land); }
   h3 { font-size: 13px; margin: 16px 0 8px; padding-top: 12px; border-top: 1px solid var(--line); }
   .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
   .seg label { padding: 5px 12px; cursor: pointer; font-size: 13px; }
@@ -102,6 +104,17 @@
         <figure><img id="tplImg" alt=""><figcaption>上鱼图标模板</figcaption></figure>
       </div>
 
+      <div id="landBlock">
+      <h3>结算标志（判断鱼是否已拉上来）</h3>
+      <div class="row"><span>结算标志分数 <b id="sLand" style="font-family:var(--mono)">–</b></span></div>
+      <div class="bar land"><div class="fill" id="landFill"></div><div class="th" id="landThMark"></div></div>
+      <div class="legend" style="margin-left:0" id="landMsg"></div>
+      <div class="preview" style="margin-top:8px">
+        <figure><img id="landPrev" alt=""><figcaption>结算标志区域实时画面</figcaption></figure>
+        <figure><img id="landTplImg" alt=""><figcaption>结算标志模板</figcaption></figure>
+      </div>
+      </div>
+
       <h3>入护判定 <span class="phase" id="keepPhase"></span></h3>
       <div class="row">
         <span>入护分数 <b id="sKeep" style="font-family:var(--mono)">–</b></span>
@@ -123,13 +136,14 @@
         <span class="seg">
           <label><input type="radio" name="target" value="fish" checked>上鱼图标</label>
           <label><input type="radio" name="target" value="keep">入护图标</label>
+          <label><input type="radio" name="target" value="landed">结算标志</label>
         </span>
         <span class="legend" style="margin-left:0">下面的按钮作用于选中的对象</span>
       </div>
       <div class="row">
         <select id="monSel"></select>
         <button id="shotBtn">刷新截图</button>
-        <span class="legend"><i style="background:var(--roi)"></i>上鱼区域<i style="background:var(--keep)"></i>入护区域<i style="background:var(--sel)"></i>当前选区<i style="background:var(--hit)"></i>固定点击点</span>
+        <span class="legend"><i style="background:var(--roi)"></i>上鱼区域<i style="background:var(--keep)"></i>入护区域<i style="background:var(--land)"></i>结算标志区域<i style="background:var(--sel)"></i>当前选区<i style="background:var(--hit)"></i>固定点击点</span>
       </div>
       <div class="canvas-wrap"><canvas id="cv"></canvas><div class="empty" id="cvEmpty">先让要截的图标出现在屏幕上，再点「刷新截图」，然后拖动鼠标框选</div></div>
       <div class="row" style="margin-top:10px">
@@ -169,7 +183,15 @@
 
         <h3>入护判定（双击上鱼之后）</h3>
         <label class="f"><span>启用入护判定</span><select name="keep_enabled"><option value="true">是</option><option value="false">否</option></select></label>
-        <label class="f"><span>等待时间 (ms)<small>双击后等多久再开始判定，等结算界面出来</small></span><input name="keep_delay_ms" type="number" min="0"></label>
+        <label class="f"><span>怎么判断已拉上来<small>拉鱼时长不固定时，选「等结算标志」或「等上鱼图标消失」</small></span><select name="landed_mode">
+          <option value="fixed">固定等待</option>
+          <option value="marker">等结算标志（推荐）</option>
+          <option value="fish_gone">等图标消失</option></select></label>
+        <label class="f lm-marker"><span>结算标志阈值</span><input name="landed_threshold" type="number" step="0.01" min="0.3" max="1"></label>
+        <label class="f lm-marker"><span>结算标志灰度匹配</span><select name="landed_grayscale"><option value="true">是</option><option value="false">否</option></select></label>
+        <label class="f lm-gone"><span>图标消失多久算拉上来 (ms)</span><input name="landed_gone_ms" type="number" min="50"></label>
+        <label class="f lm-wait"><span>最长等待 (ms)<small>超时则什么键都不按，不会误释放</small></span><input name="landed_timeout_ms" type="number" min="1000"></label>
+        <label class="f"><span id="delayLabel">等待时间 (ms)</span><input name="keep_delay_ms" type="number" min="0"></label>
         <label class="f"><span>判定窗口 (ms)<small>窗口内任一帧命中就入护，全程未命中则释放</small></span><input name="keep_window_ms" type="number" min="50"></label>
         <label class="f"><span>入护阈值</span><input name="keep_threshold" type="number" step="0.01" min="0.3" max="1"></label>
         <label class="f"><span>有图标时按</span><select name="keep_key_present" class="keysel"></select></label>
@@ -209,8 +231,9 @@ async function api(path, opts = {}) {
 
 // ---------------------------------------------------------------- state polling
 let CFG = null, formLoaded = false, tplVersion = 0;
-const KIND = { double_click: "双击", pause: "暂停", resume: "开始", template_saved: "保存模板", keep: "入护", keep_skipped: "跳过入护" };
-const PHASE = { keep_wait: "等待结算界面…", keep_check: "判定中…" };
+const KIND = { double_click: "双击", pause: "暂停", resume: "开始", template_saved: "保存模板", keep: "入护", keep_skipped: "跳过入护", landed: "已拉上来", keep_timeout: "等待超时" };
+const PHASE = { landing: "拉鱼中，等待拉上来…", keep_wait: "已拉上来，稍等…", keep_check: "判定中…" };
+const LANDED_MODE = { marker: "等结算标志", fish_gone: "等上鱼图标消失" };
 let keyOptsLoaded = false;
 
 function fmtTime(ts) { return ts ? ts.slice(11, 19) : "–"; }
@@ -237,6 +260,15 @@ function render(st) {
   $("keepFill").className = "fill" + (ks != null && ks >= CFG.keep_threshold ? " hit" : "");
   $("keepThMark").style.left = CFG.keep_threshold * 100 + "%";
   $("keepPhase").textContent = PHASE[s.phase] || (CFG.keep_enabled ? "" : "（未启用）");
+  const ls = s.landed_score;
+  $("sLand").textContent = ls == null ? "–" : ls.toFixed(3);
+  $("landFill").style.width = Math.max(0, ls || 0) * 100 + "%";
+  $("landFill").className = "fill" + (ls != null && ls >= CFG.landed_threshold ? " hit" : "");
+  $("landThMark").style.left = CFG.landed_threshold * 100 + "%";
+  $("landBlock").hidden = CFG.landed_mode !== "marker";
+  if (!st.landed_template_exists) $("landMsg").textContent = "尚未设置：等鱼拉上来、结算界面出现时，在下方选「结算标志」，截一个结算界面上固定不变的元素（如按键提示、边框）";
+  else if (!CFG.landed_roi) $("landMsg").textContent = "尚未设置结算标志检测区域";
+  else $("landMsg").textContent = "";
   if (!st.keep_template_exists) $("keepMsg").textContent = "尚未设置：在下方选「入护图标」，截图后框选图标并保存为模板";
   else if (!CFG.keep_roi) $("keepMsg").textContent = "尚未设置入护检测区域";
   else $("keepMsg").textContent = "";
@@ -260,8 +292,10 @@ function renderEvents(evs) {
       d = `<b>${e.decision === "keep" ? "入护" : "释放"}</b> → ${e.key} 最高分 ${e.score}` + (e.dry_run ? " dry-run" : "");
       if (e.snapshot) d += ` <a href="/api/snapshot/${e.snapshot}?${tq()}" target="_blank">截图</a>`;
     } else if (e.kind === "keep_skipped") d = e.reason;
+    else if (e.kind === "landed") d = `${LANDED_MODE[e.mode] || e.mode}，拉鱼 ${(e.waited_ms / 1000).toFixed(1)} 秒`;
+    else if (e.kind === "keep_timeout") d = e.stopped ? "已停止" : `${(e.waited_ms / 1000).toFixed(1)} 秒内没等到拉上来，未按任何键`;
     else if (e.source) d = e.source === "hotkey" ? "F8 热键" : "网页";
-    else if (e.width) d = (e.target === "keep" ? "入护 " : "上鱼 ") + `${e.width}×${e.height}`;
+    else if (e.width) d = ({ keep: "入护 ", landed: "结算标志 " }[e.target] || "上鱼 ") + `${e.width}×${e.height}`;
     return `<tr><td class="t">${e.ts.slice(5, 19).replace("T", " ")}</td><td>${KIND[e.kind] || e.kind}</td><td>${d}</td></tr>`;
   }).join("") || `<tr><td class="legend">暂无事件</td></tr>`;
 }
@@ -286,13 +320,25 @@ function refreshTemplate() {
   tplVersion++;
   $("tplImg").src = `/api/template.png?${tq()}target=fish&v=${tplVersion}`;
   $("keepTplImg").src = `/api/template.png?${tq()}target=keep&v=${tplVersion}`;
+  $("landTplImg").src = `/api/template.png?${tq()}target=landed&v=${tplVersion}`;
 }
 
 // ---------------------------------------------------------------- form
-const BOOL_FIELDS = ["grayscale", "restore_cursor", "save_snapshots", "keep_enabled", "keep_grayscale"];
+const BOOL_FIELDS = ["grayscale", "restore_cursor", "save_snapshots", "keep_enabled", "keep_grayscale", "landed_grayscale"];
+function syncLandedFields() {
+  const m = $("cfgForm").elements.landed_mode.value;
+  document.querySelectorAll(".lm-marker").forEach((el) => (el.hidden = m !== "marker"));
+  document.querySelectorAll(".lm-gone").forEach((el) => (el.hidden = m !== "fish_gone"));
+  document.querySelectorAll(".lm-wait").forEach((el) => (el.hidden = m === "fixed"));
+  $("delayLabel").innerHTML = m === "fixed"
+    ? "等待时间 (ms)<small>双击后固定等多久再判定，要比最慢的拉鱼还长</small>"
+    : "拉上来后再等 (ms)<small>确认拉上来后，再等多久开始判定入护图标，一般 200–500</small>";
+}
+$("cfgForm").elements.landed_mode.addEventListener("change", syncLandedFields);
 function fillForm(cfg) {
   const f = $("cfgForm");
   for (const el of f.elements) if (el.name && el.name in cfg) el.value = String(cfg[el.name]);
+  syncLandedFields();
 }
 $("cfgForm").addEventListener("submit", async (ev) => {
   ev.preventDefault();
@@ -386,6 +432,10 @@ function drawCanvas() {
     ctx.strokeStyle = css("--roi");
     ctx.strokeRect(CFG.roi.left - mon.left, CFG.roi.top - mon.top, CFG.roi.width, CFG.roi.height);
   }
+  if (CFG?.landed_roi && mon) {
+    ctx.strokeStyle = css("--land");
+    ctx.strokeRect(CFG.landed_roi.left - mon.left, CFG.landed_roi.top - mon.top, CFG.landed_roi.width, CFG.landed_roi.height);
+  }
   if (CFG?.keep_roi && mon) {
     ctx.strokeStyle = css("--keep");
     ctx.strokeRect(CFG.keep_roi.left - mon.left, CFG.keep_roi.top - mon.top, CFG.keep_roi.width, CFG.keep_roi.height);
@@ -412,7 +462,7 @@ function selRect() {
 }
 const target = () => document.querySelector('input[name="target"]:checked').value;
 document.querySelectorAll('input[name="target"]').forEach((el) => el.addEventListener("change", () => {
-  $("setPtBtn").hidden = target() === "keep";
+  $("setPtBtn").hidden = target() !== "fish";
 }));
 $("setTplBtn").onclick = async () => {
   const r = selRect(); if (!r) return;
@@ -421,7 +471,8 @@ $("setTplBtn").onclick = async () => {
 };
 $("setRoiBtn").onclick = async () => {
   const r = selRect(); if (!r) return;
-  const patch = target() === "keep" ? { keep_roi: r } : { roi: r, monitor: Number($("monSel").value) };
+  const t = target();
+  const patch = t === "keep" ? { keep_roi: r } : t === "landed" ? { landed_roi: r } : { roi: r, monitor: Number($("monSel").value) };
   try { await api("/api/config", { method: "POST", body: JSON.stringify(patch) }); }
   catch (e) { alert(e.message); }
 };
@@ -437,6 +488,7 @@ $("setPtBtn").onclick = async () => {
 loadMonitors(); poll(); refreshTemplate();
 refreshImg("roiPrev", "/api/preview.jpg");
 refreshImg("keepPrev", "/api/keep_preview.jpg");
+refreshImg("landPrev", "/api/landed_preview.jpg");
 </script>
 </body>
 </html>

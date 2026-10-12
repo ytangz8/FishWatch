@@ -37,6 +37,15 @@ DEFAULTS = {
     "keep_key_present": 0x20,          # 有图标时按的键（空格）
     "keep_key_absent": 0x08,           # 没有图标时按的键（Backspace）
     "key_hold_ms": 40,                 # 按键按住时长
+
+    # ---- 等鱼真正拉上来再判定入护 ----
+    "landed_mode": "fixed",            # fixed = 固定等 keep_delay_ms；marker = 等结算标志出现；fish_gone = 等上鱼图标消失
+    "landed_roi": None,
+    "landed_template": "landed_template.png",
+    "landed_threshold": 0.85,
+    "landed_grayscale": True,
+    "landed_gone_ms": 500,             # fish_gone 模式：上鱼图标连续消失多久算拉上来
+    "landed_timeout_ms": 60000,        # 最多等多久；超时不按任何键
 }
 
 # 允许通过网页修改的字段及其类型
@@ -66,6 +75,12 @@ EDITABLE = {
     "keep_key_present": int,
     "keep_key_absent": int,
     "key_hold_ms": int,
+    "landed_mode": str,
+    "landed_roi": dict,
+    "landed_threshold": float,
+    "landed_grayscale": bool,
+    "landed_gone_ms": int,
+    "landed_timeout_ms": int,
 }
 
 RANGES = {
@@ -83,6 +98,9 @@ RANGES = {
     "keep_key_present": (1, 254),
     "keep_key_absent": (1, 254),
     "key_hold_ms": (10, 1000),
+    "landed_threshold": (0.3, 1.0),
+    "landed_gone_ms": (50, 30_000),
+    "landed_timeout_ms": (1000, 600_000),
 }
 
 
@@ -127,11 +145,11 @@ class ConfigStore:
         for k, v in patch.items():
             if k not in EDITABLE:
                 raise ConfigError(f"不可修改的字段: {k}")
-            if v is None and k in ("roi", "click_point", "keep_roi"):
+            if v is None and k in ("roi", "click_point", "keep_roi", "landed_roi"):
                 clean[k] = None
                 continue
             typ = EDITABLE[k]
-            if k in ("roi", "keep_roi"):
+            if k in ("roi", "keep_roi", "landed_roi"):
                 v = _check_rect(v)
             elif k == "click_point":
                 v = _check_point(v)
@@ -147,6 +165,8 @@ class ConfigStore:
                 lo, hi = RANGES[k]
                 if not lo <= v <= hi:
                     raise ConfigError(f"{k} 超出范围 [{lo}, {hi}]")
+            if k == "landed_mode" and v not in ("fixed", "marker", "fish_gone"):
+                raise ConfigError("landed_mode 只能是 fixed / marker / fish_gone")
             if k == "click_mode" and v not in ("match_center", "fixed"):
                 raise ConfigError("click_mode 只能是 match_center 或 fixed")
             clean[k] = v
