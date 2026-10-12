@@ -117,7 +117,8 @@
 
       <h3>入护判定 <span class="phase" id="keepPhase"></span></h3>
       <div class="row">
-        <span>入护分数 <b id="sKeep" style="font-family:var(--mono)">–</b></span>
+        <span>入护分数 <b id="sKeep" style="font-family:var(--mono)">–</b>
+          <span class="legend" id="keepSlots" style="margin-left:6px"></span></span>
         <span class="legend" id="keepTestMsg"></span>
         <span class="spacer"></span>
         <button id="testKeepBtn" title="立即判定一次，只显示结果，不按键">测试判定</button>
@@ -125,8 +126,10 @@
       <div class="bar keep"><div class="fill" id="keepFill"></div><div class="th" id="keepThMark"></div></div>
       <div class="legend" style="margin-left:0" id="keepMsg"></div>
       <div class="preview" style="margin-top:8px">
-        <figure><img id="keepPrev" alt=""><figcaption>入护区域实时画面</figcaption></figure>
-        <figure><img id="keepTplImg" alt=""><figcaption>入护图标模板</figcaption></figure>
+        <figure><img id="keepPrev" alt=""><figcaption>入护 1 区域</figcaption></figure>
+        <figure><img id="keepTplImg" alt=""><figcaption>入护 1 模板</figcaption></figure>
+        <figure><img id="keep2Prev" alt=""><figcaption>入护 2 区域</figcaption></figure>
+        <figure><img id="keep2TplImg" alt=""><figcaption>入护 2 模板 <a href="#" id="clearKeep2">清除</a></figcaption></figure>
       </div>
     </section>
 
@@ -135,7 +138,8 @@
       <div class="row">
         <span class="seg">
           <label><input type="radio" name="target" value="fish" checked>上鱼图标</label>
-          <label><input type="radio" name="target" value="keep">入护图标</label>
+          <label><input type="radio" name="target" value="keep">入护图标 1</label>
+          <label><input type="radio" name="target" value="keep2">入护图标 2</label>
           <label><input type="radio" name="target" value="landed">结算标志</label>
         </span>
         <span class="legend" style="margin-left:0">下面的按钮作用于选中的对象</span>
@@ -143,7 +147,7 @@
       <div class="row">
         <select id="monSel"></select>
         <button id="shotBtn">刷新截图</button>
-        <span class="legend"><i style="background:var(--roi)"></i>上鱼区域<i style="background:var(--keep)"></i>入护区域<i style="background:var(--land)"></i>结算标志区域<i style="background:var(--sel)"></i>当前选区<i style="background:var(--hit)"></i>固定点击点</span>
+        <span class="legend"><i style="background:var(--roi)"></i>上鱼区域<i style="background:var(--keep)"></i>入护区域（虚线 = 2）<i style="background:var(--land)"></i>结算标志区域<i style="background:var(--sel)"></i>当前选区<i style="background:var(--hit)"></i>固定点击点</span>
       </div>
       <div class="canvas-wrap"><canvas id="cv"></canvas><div class="empty" id="cvEmpty">先让要截的图标出现在屏幕上，再点「刷新截图」，然后拖动鼠标框选</div></div>
       <div class="row" style="margin-top:10px">
@@ -231,7 +235,7 @@ async function api(path, opts = {}) {
 
 // ---------------------------------------------------------------- state polling
 let CFG = null, formLoaded = false, tplVersion = 0;
-const KIND = { double_click: "双击", pause: "暂停", resume: "开始", template_saved: "保存模板", keep: "入护", keep_skipped: "跳过入护", landed: "已拉上来", keep_timeout: "等待超时" };
+const KIND = { double_click: "双击", pause: "暂停", resume: "开始", template_saved: "保存模板", keep: "入护", keep_skipped: "跳过入护", landed: "已拉上来", keep_timeout: "等待超时", template_cleared: "清除模板" };
 const PHASE = { landing: "拉鱼中，等待拉上来…", keep_wait: "已拉上来，稍等…", keep_check: "判定中…" };
 const LANDED_MODE = { marker: "等结算标志", fish_gone: "等上鱼图标消失" };
 let keyOptsLoaded = false;
@@ -269,9 +273,12 @@ function render(st) {
   if (!st.landed_template_exists) $("landMsg").textContent = "尚未设置：等鱼拉上来、结算界面出现时，在下方选「结算标志」，截一个结算界面上固定不变的元素（如按键提示、边框）";
   else if (!CFG.landed_roi) $("landMsg").textContent = "尚未设置结算标志检测区域";
   else $("landMsg").textContent = "";
-  if (!st.keep_template_exists) $("keepMsg").textContent = "尚未设置：在下方选「入护图标」，截图后框选图标并保存为模板";
-  else if (!CFG.keep_roi) $("keepMsg").textContent = "尚未设置入护检测区域";
+  const fmt = (v) => (v == null ? "未设置" : v.toFixed(3));
+  $("keepSlots").textContent = `（1：${fmt(s.keep1_score)}　2：${fmt(s.keep2_score)}）`;
+  const ok1 = st.keep_template_exists && CFG.keep_roi, ok2 = st.keep2_template_exists && CFG.keep2_roi;
+  if (!ok1 && !ok2) $("keepMsg").textContent = "尚未设置：在下方选「入护图标 1」，截图后框选图标并保存为模板。有第二种入护图标时，再用「入护图标 2」设置，任意一个命中就入护";
   else $("keepMsg").textContent = "";
+  $("clearKeep2").hidden = !(st.keep2_template_exists || CFG.keep2_roi);
   if (!keyOptsLoaded) {
     const opts = Object.entries(st.key_names).map(([vk, n]) => `<option value="${vk}">${n}</option>`).join("");
     document.querySelectorAll(".keysel").forEach((el) => (el.innerHTML = opts));
@@ -289,13 +296,14 @@ function renderEvents(evs) {
       d = `(${e.x}, ${e.y})` + (e.score != null ? ` 分数 ${e.score}` : "") + (e.reason === "test" ? " 测试" : "") + (e.dry_run ? " dry-run" : "");
       if (e.snapshot) d += ` <a href="/api/snapshot/${e.snapshot}?${tq()}" target="_blank">截图</a>`;
     } else if (e.kind === "keep") {
-      d = `<b>${e.decision === "keep" ? "入护" : "释放"}</b> → ${e.key} 最高分 ${e.score}` + (e.dry_run ? " dry-run" : "");
+      d = `<b>${e.decision === "keep" ? "入护" : "释放"}</b> → ${e.key} 最高分 ${e.score}` + (e.matched ? `（${e.matched}）` : "") + (e.dry_run ? " dry-run" : "");
       if (e.snapshot) d += ` <a href="/api/snapshot/${e.snapshot}?${tq()}" target="_blank">截图</a>`;
     } else if (e.kind === "keep_skipped") d = e.reason;
     else if (e.kind === "landed") d = `${LANDED_MODE[e.mode] || e.mode}，拉鱼 ${(e.waited_ms / 1000).toFixed(1)} 秒`;
     else if (e.kind === "keep_timeout") d = e.stopped ? "已停止" : `${(e.waited_ms / 1000).toFixed(1)} 秒内没等到拉上来，未按任何键`;
     else if (e.source) d = e.source === "hotkey" ? "F8 热键" : "网页";
-    else if (e.width) d = ({ keep: "入护 ", landed: "结算标志 " }[e.target] || "上鱼 ") + `${e.width}×${e.height}`;
+    else if (e.kind === "template_cleared") d = "入护图标 2";
+    else if (e.width) d = ({ keep: "入护 1 ", keep2: "入护 2 ", landed: "结算标志 " }[e.target] || "上鱼 ") + `${e.width}×${e.height}`;
     return `<tr><td class="t">${e.ts.slice(5, 19).replace("T", " ")}</td><td>${KIND[e.kind] || e.kind}</td><td>${d}</td></tr>`;
   }).join("") || `<tr><td class="legend">暂无事件</td></tr>`;
 }
@@ -320,6 +328,7 @@ function refreshTemplate() {
   tplVersion++;
   $("tplImg").src = `/api/template.png?${tq()}target=fish&v=${tplVersion}`;
   $("keepTplImg").src = `/api/template.png?${tq()}target=keep&v=${tplVersion}`;
+  $("keep2TplImg").src = `/api/template.png?${tq()}target=keep2&v=${tplVersion}`;
   $("landTplImg").src = `/api/template.png?${tq()}target=landed&v=${tplVersion}`;
 }
 
@@ -359,9 +368,14 @@ $("toggleBtn").onclick = async () => {
 $("testKeepBtn").onclick = async () => {
   try {
     const r = await api("/api/test_keep", { method: "POST" });
-    $("keepTestMsg").textContent = `测试：${r.score} → ${r.decision === "keep" ? "入护" : "释放"}，会按 ${r.key}（未实际按键）`;
+    $("keepTestMsg").textContent = `测试：${r.score}（${r.matched}）→ ${r.decision === "keep" ? "入护" : "释放"}，会按 ${r.key}（未实际按键）`;
     setTimeout(() => ($("keepTestMsg").textContent = ""), 6000);
   } catch (e) { alert(e.message); }
+};
+$("clearKeep2").onclick = async (ev) => {
+  ev.preventDefault();
+  if (!confirm("清除入护图标 2 的模板和检测区域？")) return;
+  try { await api("/api/template?target=keep2", { method: "DELETE" }); refreshTemplate(); } catch (e) { alert(e.message); }
 };
 $("testBtn").onclick = async () => {
   try { const r = await api("/api/test_click?delay=3", { method: "POST" }); $("testBtn").textContent = `3 秒后双击 (${r.x}, ${r.y})`; }
@@ -436,9 +450,12 @@ function drawCanvas() {
     ctx.strokeStyle = css("--land");
     ctx.strokeRect(CFG.landed_roi.left - mon.left, CFG.landed_roi.top - mon.top, CFG.landed_roi.width, CFG.landed_roi.height);
   }
-  if (CFG?.keep_roi && mon) {
-    ctx.strokeStyle = css("--keep");
-    ctx.strokeRect(CFG.keep_roi.left - mon.left, CFG.keep_roi.top - mon.top, CFG.keep_roi.width, CFG.keep_roi.height);
+  for (const [k, dash] of [["keep_roi", []], ["keep2_roi", [8, 5]]]) {
+    const r = CFG?.[k];
+    if (!r || !mon) continue;
+    ctx.strokeStyle = css("--keep"); ctx.setLineDash(dash);
+    ctx.strokeRect(r.left - mon.left, r.top - mon.top, r.width, r.height);
+    ctx.setLineDash([]);
   }
   if (CFG?.click_mode === "fixed" && CFG.click_point && mon) {
     const x = CFG.click_point.x - mon.left, y = CFG.click_point.y - mon.top, r = lw * 5;
@@ -472,7 +489,7 @@ $("setTplBtn").onclick = async () => {
 $("setRoiBtn").onclick = async () => {
   const r = selRect(); if (!r) return;
   const t = target();
-  const patch = t === "keep" ? { keep_roi: r } : t === "landed" ? { landed_roi: r } : { roi: r, monitor: Number($("monSel").value) };
+  const patch = { keep: { keep_roi: r }, keep2: { keep2_roi: r }, landed: { landed_roi: r } }[t] || { roi: r, monitor: Number($("monSel").value) };
   try { await api("/api/config", { method: "POST", body: JSON.stringify(patch) }); }
   catch (e) { alert(e.message); }
 };
@@ -488,6 +505,7 @@ $("setPtBtn").onclick = async () => {
 loadMonitors(); poll(); refreshTemplate();
 refreshImg("roiPrev", "/api/preview.jpg");
 refreshImg("keepPrev", "/api/keep_preview.jpg");
+refreshImg("keep2Prev", "/api/keep2_preview.jpg");
 refreshImg("landPrev", "/api/landed_preview.jpg");
 </script>
 </body>

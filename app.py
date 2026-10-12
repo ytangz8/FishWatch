@@ -77,6 +77,7 @@ def state():
         "config": cfg,
         "template_exists": tpl.exists(),
         "keep_template_exists": (BASE / cfg["keep_template"]).exists(),
+        "keep2_template_exists": (BASE / cfg["keep2_template"]).exists(),
         "landed_template_exists": (BASE / cfg["landed_template"]).exists(),
         "key_names": {str(k): v for k, v in win_input.KEY_NAMES.items()},
         "events": list(engine.events)[-50:][::-1],
@@ -131,6 +132,25 @@ def keep_preview():
     return Response(engine.keep_preview_jpeg, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
 
 
+@app.get("/api/keep2_preview.jpg")
+def keep2_preview():
+    if engine.keep2_preview_jpeg is None:
+        raise HTTPException(404, "暂无预览")
+    return Response(engine.keep2_preview_jpeg, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+
+@app.delete("/api/template")
+def clear_template(target: str):
+    """清除某个目标的模板和检测区域（目前只开放给可选的 keep2）。"""
+    if target != "keep2":
+        raise HTTPException(400, "只能清除入护图标 2")
+    cfg = store.snapshot()
+    (BASE / cfg["keep2_template"]).unlink(missing_ok=True)
+    store.update({"keep2_roi": None})
+    engine._record("template_cleared", target=target)
+    return {"ok": True}
+
+
 @app.get("/api/landed_preview.jpg")
 def landed_preview():
     if engine.landed_preview_jpeg is None:
@@ -152,7 +172,7 @@ def template_img(target: str = "fish"):
 @app.post("/api/template")
 async def save_template(request: Request, target: str = "fish"):
     if target not in TARGETS:
-        raise HTTPException(400, "target 只能是 fish / keep / landed")
+        raise HTTPException(400, "target 只能是 " + " / ".join(TARGETS))
     rect = await request.json()
     try:
         r = {k: int(rect[k]) for k in ("left", "top", "width", "height")}
@@ -207,7 +227,7 @@ def test_keep():
     """立即对入护区域判定一次，只返回结果，不按键。"""
     cfg = store.snapshot()
     try:
-        score, _, _ = engine.keep_score(cfg)
+        score, _, _, slot = engine.keep_score(cfg)
     except ValueError as e:
         raise HTTPException(400, str(e))
     present = score >= cfg["keep_threshold"]
@@ -215,6 +235,7 @@ def test_keep():
     return {
         "score": round(score, 4),
         "decision": "keep" if present else "release",
+        "matched": TARGETS[slot]["label"],
         "key": win_input.KEY_NAMES.get(key, hex(key)),
     }
 

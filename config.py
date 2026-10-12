@@ -37,6 +37,8 @@ DEFAULTS = {
     "keep_key_present": 0x20,          # 有图标时按的键（空格）
     "keep_key_absent": 0x08,           # 没有图标时按的键（Backspace）
     "key_hold_ms": 40,                 # 按键按住时长
+    "keep2_roi": None,                 # 第二个入护图标（可选），满足任意一个就入护
+    "keep2_template": "keep2_template.png",
 
     # ---- 等鱼真正拉上来再判定入护 ----
     "landed_mode": "fixed",            # fixed = 固定等 keep_delay_ms；marker = 等结算标志出现；fish_gone = 等上鱼图标消失
@@ -75,6 +77,7 @@ EDITABLE = {
     "keep_key_present": int,
     "keep_key_absent": int,
     "key_hold_ms": int,
+    "keep2_roi": dict,
     "landed_mode": str,
     "landed_roi": dict,
     "landed_threshold": float,
@@ -145,11 +148,11 @@ class ConfigStore:
         for k, v in patch.items():
             if k not in EDITABLE:
                 raise ConfigError(f"不可修改的字段: {k}")
-            if v is None and k in ("roi", "click_point", "keep_roi", "landed_roi"):
+            if v is None and k in ("roi", "click_point", "keep_roi", "keep2_roi", "landed_roi"):
                 clean[k] = None
                 continue
             typ = EDITABLE[k]
-            if k in ("roi", "keep_roi", "landed_roi"):
+            if k in ("roi", "keep_roi", "keep2_roi", "landed_roi"):
                 v = _check_rect(v)
             elif k == "click_point":
                 v = _check_point(v)

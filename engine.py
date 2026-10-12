@@ -87,7 +87,10 @@ def match(img_bgr: np.ndarray, tpl_bgr: np.ndarray, tpl_gray: np.ndarray, graysc
 TARGETS = {
     "fish":   {"label": "上鱼图标", "roi": "roi", "template": "template",
                "threshold": "threshold", "grayscale": "grayscale"},
-    "keep":   {"label": "入护判定", "roi": "keep_roi", "template": "keep_template",
+    "keep":   {"label": "入护图标 1", "roi": "keep_roi", "template": "keep_template",
+               "threshold": "keep_threshold", "grayscale": "keep_grayscale"},
+    # 第二个入护模板：与 1 共用阈值和灰度设置，满足任意一个就入护
+    "keep2":  {"label": "入护图标 2", "roi": "keep2_roi", "template": "keep2_template",
                "threshold": "keep_threshold", "grayscale": "keep_grayscale"},
     "landed": {"label": "结算标志", "roi": "landed_roi", "template": "landed_template",
                "threshold": "landed_threshold", "grayscale": "landed_grayscale"},
@@ -120,10 +123,13 @@ class Engine:
             "dry_run": not win_input.IS_WIN,
             "phase": "idle",       # idle / landing / keep_wait / keep_check
             "keep_score": None,
+            "keep1_score": None,
+            "keep2_score": None,
             "landed_score": None,
         }
         self.preview_jpeg = None
         self.keep_preview_jpeg = None
+        self.keep2_preview_jpeg = None
         self.landed_preview_jpeg = None
         self.last_full = None      # (monitor_rect, bgr image) 给网页框选用
         self.last_match = None     # 最近一次匹配到的屏幕坐标中心
@@ -133,7 +139,7 @@ class Engine:
     def _restore_migrated_templates(self):
         """撤销已回退版本（多模板库）做过的迁移：它把 template.png 改名成 template.png.migrated。"""
         cfg = self.store.snapshot()
-        for name in {cfg["template"], cfg["keep_template"], cfg["landed_template"]}:
+        for name in {cfg["template"], cfg["keep_template"], cfg["landed_template"]}:  # keep2 是新加的，无需恢复
             dst = self.base / name
             src = dst.with_name(dst.name + ".migrated")
             if not dst.exists() and src.exists():
@@ -263,11 +269,32 @@ class Engine:
         th, tw = tpl_gray.shape
         return score, img, (mx, my, tw, th)
 
+    KEEP_SLOTS = ("keep", "keep2")
+
+    def keep_slots(self, cfg):
+        """已配置好的入护模板槽位列表。一个都没有时抛 ValueError。"""
+        ready, errors = [], []
+        for slot in self.KEEP_SLOTS:
+            try:
+                self.target_ready(cfg, slot)
+                ready.append(slot)
+            except ValueError as e:
+                errors.append(str(e))
+        if not ready:
+            raise ValueError("入护判定：入护图标 1 和 2 都未设置好（" + "；".join(errors) + "）")
+        return ready
+
     def keep_ready(self, cfg):
-        return self.target_ready(cfg, "keep")
+        return self.keep_slots(cfg)
 
     def keep_score(self, cfg):
-        return self.target_score(cfg, "keep")
+        """对所有已设置的入护模板各匹配一次，取最高分。返回 (score, img, box, slot)。"""
+        best = None
+        for slot in self.keep_slots(cfg):
+            score, img, box = self.target_score(cfg, slot)
+            if best is None or score > best[0]:
+                best = (score, img, box, slot)
+        return best
 
     def wait_landed(self, cfg):
         """双击后等鱼真正拉上来。返回 (ok, info)。ok=False 表示超时或被停止，此时不应按任何键。
@@ -335,14 +362,14 @@ class Engine:
         self.status["phase"] = "keep_check"
 
         deadline = time.perf_counter() + cfg["keep_window_ms"] / 1000
-        best, best_img, best_box = -1.0, None, None
+        best, best_img, best_box, best_slot = -1.0, None, None, None
         present = False
         checks = 0
         while not self._stop.is_set():
-            score, img, box = self.keep_score(cfg)
+            score, img, box, slot = self.keep_score(cfg)
             checks += 1
             if score > best:
-                best, best_img, best_box = score, img, box
+                best, best_img, best_box, best_slot = score, img, box, slot
             if score >= cfg["keep_threshold"]:
                 present = True
                 break
@@ -360,6 +387,7 @@ class Engine:
             "keep",
             decision="keep" if present else "release",
             score=round(best, 3),
+            matched=TARGETS[best_slot]["label"] if best_slot else None,
             checks=checks,
             key=win_input.KEY_NAMES.get(key, hex(key)),
             dry_run=not real,
@@ -372,21 +400,24 @@ class Engine:
 
     def _update_keep_preview(self, cfg):
         """空闲时也刷新入护 / 结算标志区域的分数和预览，方便在网页上调阈值。"""
-        for target in ("keep", "landed"):
+        status_key = {"keep": "keep1_score", "keep2": "keep2_score", "landed": "landed_score"}
+        for target in ("keep", "keep2", "landed"):
             spec = TARGETS[target]
             try:
                 score, img, (x, y, w, h) = self.target_score(cfg, target)
             except ValueError:
-                self.status[f"{target}_score"] = None
+                self.status[status_key[target]] = None
                 setattr(self, f"{target}_preview_jpeg", None)
                 continue
-            self.status[f"{target}_score"] = round(score, 4)
+            self.status[status_key[target]] = round(score, 4)
             vis = np.ascontiguousarray(img).copy()
             color = (0, 200, 0) if score >= cfg[spec["threshold"]] else (160, 160, 160)
             cv2.rectangle(vis, (x, y), (x + w, y + h), color, 2)
             ok, buf = cv2.imencode(".jpg", vis, [cv2.IMWRITE_JPEG_QUALITY, 75])
             if ok:
                 setattr(self, f"{target}_preview_jpeg", buf.tobytes())
+        ks = [v for v in (self.status["keep1_score"], self.status["keep2_score"]) if v is not None]
+        self.status["keep_score"] = max(ks) if ks else None
 
     # ---- main loop -----------------------------------------------
     def start(self):
