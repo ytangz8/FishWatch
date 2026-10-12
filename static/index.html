@@ -157,6 +157,7 @@
         <label class="f"><span>匹配阈值<small>分数 ≥ 阈值算命中，0.80–0.92 常用</small></span><input name="threshold" type="number" step="0.01" min="0.3" max="1"></label>
         <label class="f"><span>连续命中帧数<small>防抖，避免一闪而过的误判</small></span><input name="debounce" type="number" min="1"></label>
         <label class="f"><span>冷却 (ms)<small>触发后多久内不再触发</small></span><input name="cooldown_ms" type="number" min="0"></label>
+        <label class="f"><span>图标消失多久才重新触发 (ms)<small>防止拉鱼时图标还在被重复双击；0 = 关闭</small></span><input name="rearm_gone_ms" type="number" min="0"></label>
         <label class="f"><span>检测间隔 (ms)</span><input name="interval_ms" type="number" min="10"></label>
         <label class="f"><span>点击延迟 (ms)<small>命中后等多久再双击</small></span><input name="click_delay_ms" type="number" min="0"></label>
         <label class="f"><span>双击间隔 (ms)</span><input name="double_click_gap_ms" type="number" min="10" max="400"></label>
@@ -219,7 +220,7 @@ function render(st) {
   const on = CFG.enabled;
   const pill = $("statePill");
   if (s.error) { pill.className = "pill err"; pill.textContent = on ? "监控中 · " + s.error : s.error; }
-  else { pill.className = "pill " + (on ? "on" : "off"); pill.textContent = on ? "监控中" : "已暂停"; }
+  else { pill.className = "pill " + (on ? "on" : "off"); pill.textContent = on ? (s.armed === false ? "监控中 · 等待图标消失" : "监控中") : "已暂停"; }
   $("dryPill").hidden = !s.dry_run;
   $("toggleBtn").textContent = on ? "暂停" : "开始";
   $("sScore").textContent = s.score.toFixed(3);

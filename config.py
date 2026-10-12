@@ -15,6 +15,7 @@ DEFAULTS = {
     "grayscale": True,       # 灰度匹配更快；图标靠颜色区分时改 False
     "debounce": 2,           # 连续命中 N 帧才触发
     "cooldown_ms": 3000,     # 触发后冷却时间
+    "rearm_gone_ms": 500,    # 触发后，图标要连续消失这么久才允许下一次触发
     "interval_ms": 50,       # 检测间隔
     "click_mode": "match_center",  # match_center = 点图标中心；fixed = 点固定坐标
     "click_point": None,     # fixed 模式的坐标 {x, y}
@@ -46,6 +47,7 @@ EDITABLE = {
     "grayscale": bool,
     "debounce": int,
     "cooldown_ms": int,
+    "rearm_gone_ms": int,
     "interval_ms": int,
     "click_mode": str,
     "click_point": dict,
@@ -70,6 +72,7 @@ RANGES = {
     "threshold": (0.3, 1.0),
     "debounce": (1, 50),
     "cooldown_ms": (0, 600_000),
+    "rearm_gone_ms": (0, 60_000),
     "interval_ms": (10, 5000),
     "click_delay_ms": (0, 10_000),
     "double_click_gap_ms": (10, 400),

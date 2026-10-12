@@ -339,6 +339,8 @@ class Engine:
     def _loop(self):
         consec = 0
         last_fire = 0.0
+        armed = True          # 触发后上锁，图标消失足够久才重新允许触发
+        gone_since = None     # 上锁期间图标开始消失的时刻
         frames, fps_t0 = 0, time.perf_counter()
         last_preview = 0.0
         hotkey_prev = False
@@ -380,7 +382,17 @@ class Engine:
                 self.last_match = center
 
             now = time.perf_counter()
-            if (cfg["enabled"] and consec >= cfg["debounce"]
+            # 拉鱼过程中上鱼图标往往还在屏幕上；只靠冷却的话，冷却一结束就会再双击一次，打断拉鱼。
+            # 所以触发后上锁，必须看到图标连续消失 rearm_gone_ms 才解锁。
+            if not armed:
+                if hit:
+                    gone_since = None
+                elif gone_since is None:
+                    gone_since = now
+                elif (now - gone_since) * 1000 >= cfg["rearm_gone_ms"]:
+                    armed, gone_since = True, None
+            self.status["armed"] = armed
+            if (cfg["enabled"] and armed and consec >= cfg["debounce"]
                     and (now - last_fire) * 1000 >= cfg["cooldown_ms"]):
                 tx, ty = self.click_target(cfg, center)
                 snap = self._save_snapshot(img, (mx, my, tw, th)) if cfg["save_snapshots"] else None
@@ -392,6 +404,7 @@ class Engine:
                     self.run_keep_stage(cfg)
                 last_fire = time.perf_counter()  # 冷却从整轮（双击 + 入护）结束后开始算
                 consec = 0
+                armed, gone_since = False, None
 
             # 状态 & 预览
             self.status.update(score=round(score, 4), hit=hit, error=None)
