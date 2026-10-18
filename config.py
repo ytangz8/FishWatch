@@ -39,13 +39,8 @@ DEFAULTS = {
     "key_hold_ms": 40,                 # 按键按住时长
     # ---- 入护/释放后重新放线 ----
     "cast_enabled": False,
-    "cast_roi": None,
-    "cast_template": "cast_template.png",
-    "cast_threshold": 0.85,
-    "cast_grayscale": True,
     "cast_delay_ms": 1500,             # 按完入护/释放后等多久再左键放线（等结算界面关闭）
-    "cast_timeout_ms": 30000,          # 放线后最多等多久停止标志；超时不再按左键
-    "cast_stop_delay_ms": 0,           # 看到停止标志后再等多久按左键停止
+    "cast_duration_s": 3.0,            # 放线时长：第一次左键后过这么多秒再左键停止
     "cast_click_mode": "fish_point",   # fish_point = 在双击上鱼的位置点左键；cursor = 当前光标位置
     "cast_hold_ms": 50,
     "keep2_roi": None,                 # 第二个入护图标（可选），满足任意一个就入护
@@ -90,12 +85,8 @@ EDITABLE = {
     "key_hold_ms": int,
     "keep2_roi": dict,
     "cast_enabled": bool,
-    "cast_roi": dict,
-    "cast_threshold": float,
-    "cast_grayscale": bool,
     "cast_delay_ms": int,
-    "cast_timeout_ms": int,
-    "cast_stop_delay_ms": int,
+    "cast_duration_s": float,
     "cast_click_mode": str,
     "cast_hold_ms": int,
     "landed_mode": str,
@@ -122,10 +113,8 @@ RANGES = {
     "keep_key_absent": (1, 254),
     "key_hold_ms": (10, 1000),
     "landed_threshold": (0.3, 1.0),
-    "cast_threshold": (0.3, 1.0),
     "cast_delay_ms": (0, 30_000),
-    "cast_timeout_ms": (1000, 600_000),
-    "cast_stop_delay_ms": (0, 10_000),
+    "cast_duration_s": (0.1, 120.0),
     "cast_hold_ms": (10, 1000),
     "landed_gone_ms": (50, 30_000),
     "landed_timeout_ms": (1000, 600_000),
@@ -173,11 +162,11 @@ class ConfigStore:
         for k, v in patch.items():
             if k not in EDITABLE:
                 raise ConfigError(f"不可修改的字段: {k}")
-            if v is None and k in ("roi", "click_point", "keep_roi", "keep2_roi", "landed_roi", "cast_roi"):
+            if v is None and k in ("roi", "click_point", "keep_roi", "keep2_roi", "landed_roi"):
                 clean[k] = None
                 continue
             typ = EDITABLE[k]
-            if k in ("roi", "keep_roi", "keep2_roi", "landed_roi", "cast_roi"):
+            if k in ("roi", "keep_roi", "keep2_roi", "landed_roi"):
                 v = _check_rect(v)
             elif k == "click_point":
                 v = _check_point(v)

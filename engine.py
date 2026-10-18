@@ -94,8 +94,6 @@ TARGETS = {
                "threshold": "keep_threshold", "grayscale": "keep_grayscale"},
     "landed": {"label": "结算标志", "roi": "landed_roi", "template": "landed_template",
                "threshold": "landed_threshold", "grayscale": "landed_grayscale"},
-    "cast":   {"label": "放线停止标志", "roi": "cast_roi", "template": "cast_template",
-               "threshold": "cast_threshold", "grayscale": "cast_grayscale"},
 }
 
 
@@ -132,13 +130,11 @@ class Engine:
             "keep1_score": None,
             "keep2_score": None,
             "landed_score": None,
-            "cast_score": None,
         }
         self.preview_jpeg = None
         self.keep_preview_jpeg = None
         self.keep2_preview_jpeg = None
         self.landed_preview_jpeg = None
-        self.cast_preview_jpeg = None
         self._hotkey_prev = False
         self._guard = False        # True = 正在进行一轮自动操作，暂停时要中止
         self.last_full = None      # (monitor_rect, bgr image) 给网页框选用
@@ -429,13 +425,7 @@ class Engine:
         return self.click_target(cfg)
 
     def run_cast_stage(self, cfg):
-        """入护/释放之后：左键放线 → 等「放线停止标志」出现 → 再左键停止。"""
-        try:
-            self.target_ready(cfg, "cast")
-        except ValueError as e:
-            self.status["error"] = str(e)
-            return self._record("cast_skipped", reason=str(e))
-
+        """入护/释放之后：左键放线 → 等 cast_duration_s 秒 → 左键停止。"""
         self.status["phase"] = "cast_wait"
         self._sleep(cfg["cast_delay_ms"] / 1000)
         pt = self.cast_point(cfg)
@@ -445,30 +435,11 @@ class Engine:
 
         self.status["phase"] = "casting"
         t0 = time.perf_counter()
-        deadline = t0 + cfg["cast_timeout_ms"] / 1000
-        consec, best, best_img, best_box = 0, -1.0, None, None
-        while not self._stop.is_set():
-            score, img, box = self.target_score(cfg, "cast")
-            self.status["cast_score"] = round(score, 4)
-            if score > best:
-                best, best_img, best_box = score, img, box
-            consec = consec + 1 if score >= cfg["cast_threshold"] else 0
-            if consec >= cfg["debounce"]:
-                break
-            if time.perf_counter() >= deadline:
-                self.status["phase"] = "idle"
-                return self._record("cast_timeout", waited_ms=int((time.perf_counter() - t0) * 1000),
-                                    best=round(best, 3))
-            self._sleep(cfg["interval_ms"] / 1000)
+        self._sleep(cfg["cast_duration_s"])
         waited = int((time.perf_counter() - t0) * 1000)
-
-        self._sleep(cfg["cast_stop_delay_ms"] / 1000)
         real = win_input.left_click(x, y, cfg["cast_hold_ms"], cfg["restore_cursor"])
-        snap = None
-        if cfg["save_snapshots"] and best_img is not None:
-            snap = self._save_snapshot(best_img, best_box, prefix="cast_")
         self.status["phase"] = "idle"
-        return self._record("cast_stop", waited_ms=waited, score=round(best, 3), dry_run=not real, snapshot=snap)
+        return self._record("cast_stop", waited_ms=waited, dry_run=not real)
 
     def run_round(self, cfg):
         """双击上鱼之后的整套流程：等拉上来 → 入护/释放 → 重新放线。暂停时中止。"""
@@ -490,8 +461,8 @@ class Engine:
 
     def _update_keep_preview(self, cfg):
         """空闲时也刷新入护 / 结算标志区域的分数和预览，方便在网页上调阈值。"""
-        status_key = {"keep": "keep1_score", "keep2": "keep2_score", "landed": "landed_score", "cast": "cast_score"}
-        for target in ("keep", "keep2", "landed", "cast"):
+        status_key = {"keep": "keep1_score", "keep2": "keep2_score", "landed": "landed_score"}
+        for target in ("keep", "keep2", "landed"):
             spec = TARGETS[target]
             try:
                 score, img, (x, y, w, h) = self.target_score(cfg, target)

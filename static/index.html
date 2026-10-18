@@ -136,17 +136,12 @@
       <div id="castBlock">
       <h3>重新放线</h3>
       <div class="row">
-        <span>停止标志分数 <b id="sCast" style="font-family:var(--mono)">–</b></span>
+        <span id="castInfo" class="legend" style="margin-left:0"></span>
         <span class="legend" id="castTestMsg"></span>
         <span class="spacer"></span>
-        <button id="testCastBtn" title="3 秒后执行一次：左键放线 → 等停止标志 → 左键停止">测试放线</button>
+        <button id="testCastBtn" title="3 秒后执行一次：左键放线 → 等放线时长 → 左键停止">测试放线</button>
       </div>
-      <div class="bar cast"><div class="fill" id="castFill"></div><div class="th" id="castThMark"></div></div>
       <div class="legend" style="margin-left:0" id="castMsg"></div>
-      <div class="preview" style="margin-top:8px">
-        <figure><img id="castPrev" alt=""><figcaption>停止标志区域</figcaption></figure>
-        <figure><img id="castTplImg" alt=""><figcaption>停止标志模板</figcaption></figure>
-      </div>
       </div>
     </section>
 
@@ -158,14 +153,13 @@
           <label><input type="radio" name="target" value="keep">入护图标 1</label>
           <label><input type="radio" name="target" value="keep2">入护图标 2</label>
           <label><input type="radio" name="target" value="landed">结算标志</label>
-          <label><input type="radio" name="target" value="cast">放线停止</label>
         </span>
         <span class="legend" style="margin-left:0">下面的按钮作用于选中的对象</span>
       </div>
       <div class="row">
         <select id="monSel"></select>
         <button id="shotBtn">刷新截图</button>
-        <span class="legend"><i style="background:var(--roi)"></i>上鱼区域<i style="background:var(--keep)"></i>入护区域（虚线 = 2）<i style="background:var(--land)"></i>结算标志区域<i style="background:var(--cast)"></i>放线停止区域<i style="background:var(--sel)"></i>当前选区<i style="background:var(--hit)"></i>固定点击点</span>
+        <span class="legend"><i style="background:var(--roi)"></i>上鱼区域<i style="background:var(--keep)"></i>入护区域（虚线 = 2）<i style="background:var(--land)"></i>结算标志区域<i style="background:var(--sel)"></i>当前选区<i style="background:var(--hit)"></i>固定点击点</span>
       </div>
       <div class="canvas-wrap"><canvas id="cv"></canvas><div class="empty" id="cvEmpty">先让要截的图标出现在屏幕上，再点「刷新截图」，然后拖动鼠标框选</div></div>
       <div class="row" style="margin-top:10px">
@@ -222,14 +216,11 @@
         <label class="f"><span>灰度匹配</span><select name="keep_grayscale"><option value="true">是</option><option value="false">否</option></select></label>
 
         <h3>重新放线（入护/释放之后）</h3>
-        <label class="f"><span>启用重新放线<small>左键放线 → 等停止标志出现 → 再左键停止，然后回到等上鱼</small></span><select name="cast_enabled"><option value="true">是</option><option value="false">否</option></select></label>
+        <label class="f"><span>启用重新放线<small>左键放线 → 等放线时长 → 再左键停止，然后回到等上鱼</small></span><select name="cast_enabled"><option value="true">是</option><option value="false">否</option></select></label>
         <label class="f"><span>放线前等待 (ms)<small>按完入护/释放后等多久再左键，等结算界面关闭</small></span><input name="cast_delay_ms" type="number" min="0"></label>
+        <label class="f"><span>放线时长 (秒)<small>第一次左键后过这么多秒再左键停止</small></span><input name="cast_duration_s" type="number" step="0.1" min="0.1" max="120"></label>
         <label class="f"><span>左键位置</span><select name="cast_click_mode"><option value="fish_point">双击上鱼的位置</option><option value="cursor">当前光标位置</option></select></label>
-        <label class="f"><span>停止标志阈值</span><input name="cast_threshold" type="number" step="0.01" min="0.3" max="1"></label>
-        <label class="f"><span>看到标志后再等 (ms)<small>命中停止标志后多久按左键停止</small></span><input name="cast_stop_delay_ms" type="number" min="0"></label>
-        <label class="f"><span>最长等待 (ms)<small>超时不再按左键停止</small></span><input name="cast_timeout_ms" type="number" min="1000"></label>
         <label class="f"><span>左键按住 (ms)</span><input name="cast_hold_ms" type="number" min="10"></label>
-        <label class="f"><span>灰度匹配</span><select name="cast_grayscale"><option value="true">是</option><option value="false">否</option></select></label>
         <div class="row"><button class="primary" type="submit">保存参数</button><span class="legend" id="cfgMsg"></span></div>
       </form>
       <div class="legend" style="margin-left:0">Windows 本机按 <b>F8</b> 可随时暂停 / 恢复</div>
@@ -264,8 +255,8 @@ async function api(path, opts = {}) {
 // ---------------------------------------------------------------- state polling
 let CFG = null, formLoaded = false, tplVersion = 0;
 const KIND = { double_click: "双击", pause: "暂停", resume: "开始", template_saved: "保存模板", keep: "入护", keep_skipped: "跳过入护", landed: "已拉上来", keep_timeout: "等待超时", template_cleared: "清除模板",
-  cast_start: "左键放线", cast_stop: "左键停止", cast_timeout: "放线超时", cast_skipped: "跳过放线", aborted: "已中止" };
-const PHASE = { landing: "拉鱼中，等待拉上来…", keep_wait: "已拉上来，稍等…", keep_check: "判定中…", cast_wait: "准备放线…", casting: "放线中，等待停止标志…" };
+  cast_start: "左键放线", cast_stop: "左键停止", aborted: "已中止" };
+const PHASE = { landing: "拉鱼中，等待拉上来…", keep_wait: "已拉上来，稍等…", keep_check: "判定中…", cast_wait: "准备放线…", casting: "放线中…" };
 const LANDED_MODE = { marker: "等结算标志", fish_gone: "等上鱼图标消失" };
 let keyOptsLoaded = false;
 
@@ -302,15 +293,9 @@ function render(st) {
   if (!st.landed_template_exists) $("landMsg").textContent = "尚未设置：等鱼拉上来、结算界面出现时，在下方选「结算标志」，截一个结算界面上固定不变的元素（如按键提示、边框）";
   else if (!CFG.landed_roi) $("landMsg").textContent = "尚未设置结算标志检测区域";
   else $("landMsg").textContent = "";
-  const cs = s.cast_score;
-  $("sCast").textContent = cs == null ? "–" : cs.toFixed(3);
-  $("castFill").style.width = Math.max(0, cs || 0) * 100 + "%";
-  $("castFill").className = "fill" + (cs != null && cs >= CFG.cast_threshold ? " hit" : "");
-  $("castThMark").style.left = CFG.cast_threshold * 100 + "%";
   $("castBlock").hidden = !CFG.cast_enabled;
-  if (!st.cast_template_exists) $("castMsg").textContent = "尚未设置：放线到位、出现该停止的提示时，在下方选「放线停止」，截取那个提示";
-  else if (!CFG.cast_roi) $("castMsg").textContent = "尚未设置放线停止检测区域";
-  else if (!CFG.keep_enabled) $("castMsg").textContent = "注意：重新放线在入护/释放之后执行，需要同时启用入护判定";
+  $("castInfo").textContent = `放线 ${CFG.cast_duration_s} 秒后停止`;
+  if (!CFG.keep_enabled) $("castMsg").textContent = "注意：重新放线在入护/释放之后执行，需要同时启用入护判定";
   else $("castMsg").textContent = "";
   const fmt = (v) => (v == null ? "未设置" : v.toFixed(3));
   $("keepSlots").textContent = `（1：${fmt(s.keep1_score)}　2：${fmt(s.keep2_score)}）`;
@@ -343,9 +328,7 @@ function renderEvents(evs) {
     else if (e.source) d = e.source === "hotkey" ? "F8 热键" : "网页";
     else if (e.kind === "template_cleared") d = "入护图标 2";
     else if (e.kind === "cast_start") d = (e.x != null ? `(${e.x}, ${e.y})` : "当前光标") + (e.dry_run ? " dry-run" : "");
-    else if (e.kind === "cast_stop") d = `等了 ${(e.waited_ms / 1000).toFixed(1)} 秒，分数 ${e.score}` + (e.dry_run ? " dry-run" : "") + (e.snapshot ? ` <a href="/api/snapshot/${e.snapshot}?${tq()}" target="_blank">截图</a>` : "");
-    else if (e.kind === "cast_timeout") d = `${(e.waited_ms / 1000).toFixed(1)} 秒内没看到停止标志（最高 ${e.best}），未按左键停止`;
-    else if (e.kind === "cast_skipped") d = e.reason;
+    else if (e.kind === "cast_stop") d = `放线 ${(e.waited_ms / 1000).toFixed(1)} 秒` + (e.dry_run ? " dry-run" : "");
     else if (e.kind === "aborted") d = `暂停时中止了正在进行的流程（${PHASE[e.phase] || e.phase}）`;
     else if (e.width) d = ({ keep: "入护 1 ", keep2: "入护 2 ", landed: "结算标志 " }[e.target] || "上鱼 ") + `${e.width}×${e.height}`;
     return `<tr><td class="t">${e.ts.slice(5, 19).replace("T", " ")}</td><td>${KIND[e.kind] || e.kind}</td><td>${d}</td></tr>`;
@@ -374,11 +357,10 @@ function refreshTemplate() {
   $("keepTplImg").src = `/api/template.png?${tq()}target=keep&v=${tplVersion}`;
   $("keep2TplImg").src = `/api/template.png?${tq()}target=keep2&v=${tplVersion}`;
   $("landTplImg").src = `/api/template.png?${tq()}target=landed&v=${tplVersion}`;
-  $("castTplImg").src = `/api/template.png?${tq()}target=cast&v=${tplVersion}`;
 }
 
 // ---------------------------------------------------------------- form
-const BOOL_FIELDS = ["grayscale", "restore_cursor", "save_snapshots", "keep_enabled", "keep_grayscale", "landed_grayscale", "cast_enabled", "cast_grayscale"];
+const BOOL_FIELDS = ["grayscale", "restore_cursor", "save_snapshots", "keep_enabled", "keep_grayscale", "landed_grayscale", "cast_enabled"];
 function syncLandedFields() {
   const m = $("cfgForm").elements.landed_mode.value;
   document.querySelectorAll(".lm-marker").forEach((el) => (el.hidden = m !== "marker"));
@@ -498,10 +480,6 @@ function drawCanvas() {
     ctx.strokeStyle = css("--roi");
     ctx.strokeRect(CFG.roi.left - mon.left, CFG.roi.top - mon.top, CFG.roi.width, CFG.roi.height);
   }
-  if (CFG?.cast_roi && mon) {
-    ctx.strokeStyle = css("--cast");
-    ctx.strokeRect(CFG.cast_roi.left - mon.left, CFG.cast_roi.top - mon.top, CFG.cast_roi.width, CFG.cast_roi.height);
-  }
   if (CFG?.landed_roi && mon) {
     ctx.strokeStyle = css("--land");
     ctx.strokeRect(CFG.landed_roi.left - mon.left, CFG.landed_roi.top - mon.top, CFG.landed_roi.width, CFG.landed_roi.height);
@@ -545,7 +523,7 @@ $("setTplBtn").onclick = async () => {
 $("setRoiBtn").onclick = async () => {
   const r = selRect(); if (!r) return;
   const t = target();
-  const patch = { keep: { keep_roi: r }, keep2: { keep2_roi: r }, landed: { landed_roi: r }, cast: { cast_roi: r } }[t] || { roi: r, monitor: Number($("monSel").value) };
+  const patch = { keep: { keep_roi: r }, keep2: { keep2_roi: r }, landed: { landed_roi: r } }[t] || { roi: r, monitor: Number($("monSel").value) };
   try { await api("/api/config", { method: "POST", body: JSON.stringify(patch) }); }
   catch (e) { alert(e.message); }
 };
@@ -563,7 +541,6 @@ refreshImg("roiPrev", "/api/preview.jpg");
 refreshImg("keepPrev", "/api/keep_preview.jpg");
 refreshImg("keep2Prev", "/api/keep2_preview.jpg");
 refreshImg("landPrev", "/api/landed_preview.jpg");
-refreshImg("castPrev", "/api/cast_preview.jpg");
 </script>
 </body>
 </html>
